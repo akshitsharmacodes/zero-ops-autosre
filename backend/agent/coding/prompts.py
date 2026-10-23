@@ -26,18 +26,18 @@ Suspect commit {sha} by {author}: "{message}" (confidence {confidence})
 Why it is suspected:
 {evidence}
 
-Most likely leaking code — {file} lines {start}-{end} ({function}):
-```
-{snippet}
-```
+Most likely leaking code: {file} lines {start}-{end} ({function}).
+
+Relevant files (already read for you; line numbers shown, do NOT copy the "NNNN | " prefix into edits):
+{files}
 
 Diff of the suspect commit:
 ```diff
 {commit_diff}
 ```
 
-Your job:
-1. Read the relevant code (and how the same thing is done correctly elsewhere in the repo).
+Your job (be efficient: each turn is slow; you may call several tools in one turn):
+1. Use the files above; read or search others only if you really need to.
 2. Write a regression test in a NEW file that reproduces the bug — it must FAIL on the current code.
 3. Make the smallest correct fix so resources are always released, even on errors.
 4. run_tests. If something fails, read the output carefully and fix it.
@@ -81,7 +81,7 @@ def system_prompt(profile, policy, max_attempts: int) -> str:
     )
 
 
-def fix_task_prompt(incident_id: str, diagnosis: dict, suspect: dict) -> str:
+def fix_task_prompt(incident_id: str, diagnosis: dict, suspect: dict, files: str = "") -> str:
     loc = suspect.get("location", {})
     commit = suspect.get("commit", {})
     return FIX_TASK.format(
@@ -93,7 +93,7 @@ def fix_task_prompt(incident_id: str, diagnosis: dict, suspect: dict) -> str:
         evidence="\n".join(f"- {e}" for e in suspect.get("evidence", [])),
         file=loc.get("file", "?"), start=loc.get("start_line", "?"), end=loc.get("end_line", "?"),
         function=loc.get("function") or "code block",
-        snippet=_clip(loc.get("snippet", ""), 3000),
+        files=files or f"```\n{_clip(loc.get('snippet', ''), 3000)}\n```",
         commit_diff=_clip(suspect.get("commit_diff", ""), 4000),
     )
 

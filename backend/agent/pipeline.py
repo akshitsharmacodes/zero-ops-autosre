@@ -32,6 +32,7 @@ from telemetry import DatabaseAdapter, TelemetryUnavailable
 from workspace.gitcmd import GitError, git
 from workspace.workspace import Workspace
 
+from .coding.briefing import CodeBriefing
 from .coding.llm import ChatClient
 from .coding.prompts import ci_task_prompt, conflict_task_prompt, fix_task_prompt, scrub, system_prompt
 from .coding.recordings import recording_for_conflict, recording_for_fix
@@ -192,7 +193,9 @@ def node_fix(state: PipelineState, deps: AgentDeps) -> dict:
     if not deps.sandbox.isolated:
         rec.event("TEST", "WARNING: Docker is unavailable - sandbox runs are NOT ISOLATED (subprocess fallback).")
 
-    task, redacted = scrub(fix_task_prompt(state["incident_id"], state["diagnosis"], suspect), cfg.secret_values)
+    briefing = CodeBriefing(ws).render(suspect.get("location", {}).get("file") or suspect["primary_file"])
+    task, redacted = scrub(fix_task_prompt(state["incident_id"], state["diagnosis"], suspect, briefing),
+                           cfg.secret_values)
     if redacted:
         rec.event("GUARD", f"Redacted {redacted} secret-like value(s) before sending context to the LLM.")
     rec.event("PATCH", f"Starting the coding agent ({deps.mode} mode, up to {cfg.max_attempts} test attempts).")

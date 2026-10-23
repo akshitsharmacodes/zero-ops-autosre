@@ -171,16 +171,21 @@ DELIVERY = {
 LLM = {
     "PROVIDER": env("LLM_PROVIDER", default="groq"),
     "TIMEOUT_SECONDS": env.float("LLM_TIMEOUT_SECONDS", default=60),
+    "MAX_OUTPUT_TOKENS": env.int("LLM_MAX_OUTPUT_TOKENS", default=1024),
+    "REASONING_EFFORT": env("LLM_REASONING_EFFORT", default="low"),
     "PROVIDERS": {
         "groq": {
             "BASE_URL": env("GROQ_BASE_URL", default="https://api.groq.com/openai/v1"),
             "API_KEY": env("GROQ_API_KEY", default=""),
-            "MODEL": env("GROQ_MODEL", default="llama-3.3-70b-versatile"),
+            "MODEL": env("GROQ_MODEL", default="openai/gpt-oss-120b"),
+            # Free tier caps tokens per minute; AutoSRE paces itself and trims old context to fit.
+            "TOKENS_PER_MINUTE": env.int("GROQ_TOKENS_PER_MINUTE", default=8000),
         },
         "nvidia": {
             "BASE_URL": env("NVIDIA_BASE_URL", default="https://integrate.api.nvidia.com/v1"),
             "API_KEY": env("NVIDIA_API_KEY", default=""),
             "MODEL": env("NVIDIA_MODEL", default="nvidia/llama-3.3-nemotron-super-49b-v1.5"),
+            "TOKENS_PER_MINUTE": env.int("NVIDIA_TOKENS_PER_MINUTE", default=0),
         },
     },
 }

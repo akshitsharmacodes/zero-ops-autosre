@@ -14,6 +14,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 
+from .context import ContextWindow
 from .llm import ChatClient, LLMUnavailable
 from .tools import TOOL_SCHEMAS, ToolBox, describe_args
 
@@ -40,6 +41,7 @@ class CodingAgent:
         self.tools = toolbox
         self.recorder = recorder
         self.max_steps = max_steps
+        self.window = ContextWindow(getattr(client, "prompt_budget", None))
 
     def run(self, system_prompt: str, task_prompt: str) -> AgentResult:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": task_prompt}]
@@ -48,7 +50,8 @@ class CodingAgent:
         step = 0
         idle_turns = 0
         while step < self.max_steps:
-            turn = self.client.complete(messages, TOOL_SCHEMAS)  # may raise LLMUnavailable
+            # The model sees a compacted copy; `messages` keeps the full history.
+            turn = self.client.complete(self.window.fit(messages, TOOL_SCHEMAS), TOOL_SCHEMAS)  # may raise LLMUnavailable
             self.recorder.audit("response", {"task": self.tools.task, "content": turn.content,
                                              "tool_calls": [{"name": c.name, "arguments": c.arguments} for c in turn.tool_calls]})
             if not turn.tool_calls:

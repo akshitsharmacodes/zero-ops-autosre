@@ -5,7 +5,7 @@ import httpx
 import openai
 import pytest
 
-from agent.coding.llm import LLMUnavailable, OpenAICompatClient
+from agent.coding.llm import LLMSettings, LLMUnavailable, OpenAICompatClient
 
 
 def _response(tool_calls=None, content=""):
@@ -19,7 +19,7 @@ def _call(name, arguments, cid="call_1"):
 
 @pytest.fixture
 def client(monkeypatch):
-    c = OpenAICompatClient("groq", "https://api.groq.com/openai/v1", "gsk_test_key_not_real_123456", "llama-test")
+    c = OpenAICompatClient(LLMSettings("groq", "https://api.groq.com/openai/v1", "gsk_test_key_not_real_123456", "llama-test"))
     sent = {}
 
     def fake_create(**kwargs):
@@ -38,6 +38,7 @@ def test_parses_native_tool_calls(client):
     assert (turn.tool_calls[0].name, turn.tool_calls[0].arguments, turn.tool_calls[0].id) == \
         ("read_file", {"path": "analytics/views.py"}, "call_1")
     assert sent["model"] == "llama-test" and sent["tool_choice"] == "auto" and sent["temperature"] <= 0.2
+    assert sent["max_tokens"] == 1024 and "extra_body" not in sent  # reasoning_effort only for gpt-oss
 
 
 def test_invalid_json_arguments_are_flagged_not_crashing(client):
@@ -66,4 +67,4 @@ def test_api_errors_become_llm_unavailable(client):
 
 def test_missing_key_is_reported_before_any_call():
     with pytest.raises(LLMUnavailable, match="no API key"):
-        OpenAICompatClient("nvidia", "https://integrate.api.nvidia.com/v1", "", "m")
+        OpenAICompatClient(LLMSettings("nvidia", "https://integrate.api.nvidia.com/v1", "", "m"))
