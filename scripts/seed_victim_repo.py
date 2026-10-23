@@ -32,10 +32,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "victim_service"
-VAR = ROOT / "var"
-ORIGIN = VAR / "victim_origin.git"
-CLONE = VAR / "victim_repo"
-BUILD = VAR / "_seed_build"
+DEFAULT_VAR = ROOT / "var"
 
 IGNORED_PARTS = {"__pycache__", "logs", ".pytest_cache"}
 IGNORED_NAMES = {"db.sqlite3"}
@@ -162,17 +159,15 @@ def source_files() -> set[str]:
     return files
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--force", action="store_true", help="delete and recreate existing repos")
-    args = parser.parse_args()
-
-    if ORIGIN.exists() or CLONE.exists():
-        if not args.force:
-            sys.exit(f"{ORIGIN} or {CLONE} already exists. Re-run with --force to recreate.")
-        rmtree(ORIGIN)
-        rmtree(CLONE)
-    rmtree(BUILD)
+def seed(var: Path = DEFAULT_VAR, force: bool = False) -> tuple[Path, Path]:
+    """Create <var>/victim_origin.git and <var>/victim_repo. Returns (origin, clone)."""
+    origin, clone, build = var / "victim_origin.git", var / "victim_repo", var / "_seed_build"
+    if origin.exists() or clone.exists():
+        if not force:
+            raise SystemExit(f"{origin} or {clone} already exists. Re-run with --force to recreate.")
+        rmtree(origin)
+        rmtree(clone)
+    rmtree(build)
 
     # Sanity check: the last stage must reproduce the current files exactly.
     assert views_for_stage(4) == read_lf(SOURCE / "analytics/views.py"), "views.py stages out of sync"
@@ -181,31 +176,38 @@ def main() -> None:
     missing = source_files() - covered
     assert not missing, f"files not assigned to any commit: {sorted(missing)}"
 
-    BUILD.mkdir(parents=True)
-    git("init", "-q", "-b", "main", cwd=BUILD)
-    git("config", "core.autocrlf", "false", cwd=BUILD)
+    build.mkdir(parents=True)
+    git("init", "-q", "-b", "main", cwd=build)
+    git("config", "core.autocrlf", "false", cwd=build)
 
     now = datetime.now(timezone.utc).replace(microsecond=0)
     for who, days_ago, message, files, stage in COMMITS:
         for rel in files:
-            write_lf(BUILD / rel, read_lf(SOURCE / rel))
-        write_lf(BUILD / "analytics/views.py", views_for_stage(stage))
-        write_lf(BUILD / "analytics/urls.py", urls_for_stage(stage))
+            write_lf(build / rel, read_lf(SOURCE / rel))
+        write_lf(build / "analytics/views.py", views_for_stage(stage))
+        write_lf(build / "analytics/urls.py", urls_for_stage(stage))
         name, email = PEOPLE[who]
         when = (now - timedelta(days=days_ago, hours=3)).isoformat()
-        git("add", "-A", cwd=BUILD)
-        git("commit", "-q", "-m", message, cwd=BUILD, env={
+        git("add", "-A", cwd=build)
+        git("commit", "-q", "-m", message, cwd=build, env={
             "GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email, "GIT_AUTHOR_DATE": when,
             "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email, "GIT_COMMITTER_DATE": when,
         })
 
-    git("clone", "-q", "--bare", str(BUILD), str(ORIGIN), cwd=VAR)
-    git("clone", "-q", "-c", "core.autocrlf=false", str(ORIGIN), str(CLONE), cwd=VAR)
-    rmtree(BUILD)
+    git("clone", "-q", "--bare", str(build), str(origin), cwd=var)
+    git("clone", "-q", "-c", "core.autocrlf=false", str(origin), str(clone), cwd=var)
+    rmtree(build)
+    return origin, clone
 
-    print(f"origin (acts as GitHub): {ORIGIN}")
-    print(f"working clone:           {CLONE}\n")
-    print(git("log", "--format=%h  %an  %ad  %s", "--date=short", cwd=CLONE))
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--force", action="store_true", help="delete and recreate existing repos")
+    args = parser.parse_args()
+    origin, clone = seed(DEFAULT_VAR, force=args.force)
+    print(f"origin (acts as GitHub): {origin}")
+    print(f"working clone:           {clone}\n")
+    print(git("log", "--format=%h  %an  %ad  %s", "--date=short", cwd=clone))
 
 
 if __name__ == "__main__":

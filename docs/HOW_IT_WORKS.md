@@ -131,4 +131,30 @@ The same idea applies to databases. AutoSRE talks to them through **adapters**, 
 
 ---
 
+## 6. Build log: what we built and what to learn from it
+
+### Phase 0: Foundation (memory and wiring)
+- **What:** a Django project whose database stores *everything that happens*: incidents, every line on the live terminal, every agent step, every sandbox run, every guardrail verdict, and every prompt sent to the AI.
+- **Why:** three features come almost for free once everything is written down. The dashboard reads it, the **audit trail** *is* it, and **replay mode** just plays it back.
+- **Lesson:** AutoSRE keeps its own notes in SQLite, *not* in the app's PostgreSQL. During an incident, the app's database is exactly the thing that's full. A rescuer can't depend on the building that's on fire.
+- **Lesson:** the agent code never talks to Django directly. It talks to a small **Recorder** interface ("write this event down"). In tests we swap in a recorder that keeps notes in a Python list. That's how every step stays testable on its own.
+
+### Phase 1: The demo patient (a bug that is real)
+- **What:** the victim app has a small **connection pool**, a shelf of reusable database connections. Correct code borrows one with `with report_pool.connection() as conn:`, and Python *always* puts it back when the block ends, even if there's an error. Charlie's new report calls `report_pool.acquire()` and never gives the connection back.
+- **Why it's realistic:** this is exactly how real pool leaks happen. Every visit to that page keeps one more connection "idle in transaction" until PostgreSQL refuses new clients.
+- **Lesson (permissions):** PostgreSQL has 100 seats. The app's account can't take the last 3. One is kept for the admin and two for AutoSRE's own account, so the rescuer can always get in. AutoSRE's account can *read statistics* and *end other sessions*, but it can't read or change the app's data. This is called **least privilege**.
+- **Lesson (history):** the seed script builds a believable git history of 5 commits by 4 people. Charlie's leaky commit is *not* the newest one, so AutoSRE can't "cheat" by blaming the last commit.
+
+### Phase 2: Detect, diagnose and stop the bleeding
+- **Adapters:** the rest of AutoSRE asks the same three questions of any database ("how full?", "who is stuck?", "end these"). Only the PostgreSQL translator knows the PostgreSQL-specific SQL.
+- **Safety detail:** before ending a session, the SQL **re-checks at that exact moment** that the session still belongs to the app, is still stuck, and has been stuck long enough. A DBA's own session is never touched. Our test proves it.
+- **Duplicate alarms:** while an incident is open, new alarms about the same problem are written down and ignored, so we never run two fixes for one bug.
+- **Logs:** the log reader picks out "too many clients" errors, the failing URLs, warning loggers, and, from error stack traces, the lines of *our* code involved (library code is ignored).
+
+### Phase 3: Correlate (who changed what)
+- **How:** for each recent commit, look only at the lines it **added**, and score them against the clues. The stuck query's distinctive words (table and column names) count most. Then come the function that served the failing URL, the URL itself, files in stack traces, and warning loggers.
+- **Result on our demo:** Charlie's commit scores 0.715 against 0.216 for the next best, with **80% confidence**. `git blame` confirms that 100% of the leaking lines come from that commit.
+- **Lesson:** confidence isn't just "how high is the score", it's also "how clearly did it win". A close race means lower confidence.
+- **Lesson:** it's all text matching on diffs, so it works for any language. Python just gets a bonus step to find exact function boundaries.
+
 *Next sections are added as each phase is built.*
