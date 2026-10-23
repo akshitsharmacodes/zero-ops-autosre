@@ -22,6 +22,23 @@ from .serializers import IncidentSummarySerializer
 
 
 @api_view(["POST"])
+def prototype(request):
+    """One-click story: fixture database, cached checks, then a real conflicting commit."""
+    incident, created = ingest_alert(
+        {"source": "prototype", "metric": "pg_connections", "value": 98, "max": 100,
+         "severity": "critical", "service": settings.TARGET_DB["NAME"]},
+        source="prototype", mode=RunMode.CACHED, approval_mode="autonomous",
+    )
+    if not created:
+        return fail("ALREADY_RUNNING", f"{incident.id} is already open. Reset it before playing the prototype again.", 409)
+    incident.refresh_from_db()
+    return ok({
+        "incident": IncidentSummarySerializer(incident).data,
+        "message": "Prototype started. After the pull request is ready, a teammate commit lands on main.",
+    }, status=201)
+
+
+@api_view(["POST"])
 def trigger(request):
     """Start realistic HTTP traffic. The victim leaks; the monitor opens the incident by itself."""
     base_url = settings.TARGET_APP["BASE_URL"]

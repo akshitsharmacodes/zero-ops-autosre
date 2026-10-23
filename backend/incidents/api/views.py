@@ -57,6 +57,12 @@ def system_status(request):
     delivery = settings.DELIVERY
     engine = settings.SANDBOX["ENGINE"]
     docker_ok = _docker_available() if engine in ("auto", "docker") else False
+    if engine == "cached":
+        sandbox = {"engine": "cached", "isolated": False, "setting": engine}
+    elif docker_ok:
+        sandbox = {"engine": "docker", "isolated": True, "setting": engine}
+    else:
+        sandbox = {"engine": "subprocess", "isolated": False, "setting": engine}
     monitor = get_monitor()
     try:
         get_adapter().snapshot()
@@ -74,7 +80,7 @@ def system_status(request):
             "auth_mode": ("app" if delivery["GITHUB_APP_ID"] else "token" if delivery["GITHUB_TOKEN"] else "none")
             if delivery["PROVIDER"] == "github" else "local",
         },
-        "sandbox": {"engine": "docker" if docker_ok else "subprocess", "isolated": docker_ok, "setting": engine},
+        "sandbox": sandbox,
         "database": {**db, "engine": settings.TARGET_DB["ENGINE"], "host": settings.TARGET_DB["HOST"]},
         "monitor": {"running": bool(monitor), "last_error": getattr(monitor, "last_error", None),
                     "threshold": config.alert_threshold, "enabled": config.monitor_enabled},
@@ -172,6 +178,9 @@ def guardrail_checklist(inc: Incident | None) -> list[dict]:
             if run is None:
                 checks.append({"id": check_id, "name": name, "status": "pending", "passed": None,
                                "details": "No sandbox run yet."})
+            elif run.engine == "cached":
+                checks.append({"id": check_id, "name": "Cached checks", "status": "passed", "passed": True,
+                               "details": "Recorded manage.py check and pytest results. No Docker container."})
             else:
                 lim = run.limits or {}
                 details = (f"Container: network {lim.get('network')}, {lim.get('host_mounts')} host mounts, "

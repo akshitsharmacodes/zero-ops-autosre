@@ -24,6 +24,7 @@ urlpatterns = [
     path("github/connect", github_views.github_connect, name="github-connect"),
     path("github/callback", github_views.github_callback, name="github-callback"),
     path("github/disconnect", github_views.github_disconnect, name="github-disconnect"),
+    path("demo/prototype", demo_views.prototype, name="demo-prototype"),
     path("demo/trigger", demo_views.trigger, name="demo-trigger"),
     path("demo/traffic", demo_views.traffic_status, name="demo-traffic"),
     path("demo/replay", demo_views.replay, name="demo-replay"),

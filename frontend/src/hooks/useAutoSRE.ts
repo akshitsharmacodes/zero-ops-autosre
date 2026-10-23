@@ -53,6 +53,7 @@ function useInvalidatingMutation<TArgs, TResult>(fn: (args: TArgs) => Promise<TR
 
 export const useUpdateConfig = () =>
   useInvalidatingMutation((patch: Partial<SystemConfig>) => api.updateConfig(patch), [["config"], ["system"]])
+export const usePrototype = () => useInvalidatingMutation(() => api.prototype(), [["incidents"]])
 export const useTriggerDemo = () => useInvalidatingMutation(() => api.triggerDemo(), [["traffic"]])
 export const useReplay = () => useInvalidatingMutation(() => api.replay(), [["incidents"]])
 export const useTeammatePush = () => useInvalidatingMutation(() => api.teammatePush(), [["incidents"]])

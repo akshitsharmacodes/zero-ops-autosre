@@ -67,6 +67,7 @@ export const api = {
   config: () => request<SystemConfig>("/config"),
   updateConfig: (patch: Partial<SystemConfig>) =>
     request<SystemConfig>("/config", { method: "PATCH", body: JSON.stringify(patch) }),
+  prototype: () => post<{ incident: IncidentSummary; message: string }>("/demo/prototype"),
   triggerDemo: () => post<{ traffic: TrafficStatus; message: string }>("/demo/trigger"),
   traffic: () => request<TrafficStatus>("/demo/traffic"),
   replay: () => post<{ incident: IncidentSummary }>("/demo/replay"),

@@ -232,8 +232,13 @@ class ToolBox:
 
         self.recorder.set_status("TESTING_IN_SANDBOX")
         engine = getattr(self.sandbox, "engine", "sandbox")
-        self.recorder.event("TEST", f"Attempt {attempt}: running checks + tests in {engine} sandbox"
-                                    f"{'' if getattr(self.sandbox, 'isolated', False) else ' (NOT ISOLATED)'}...")
+        if engine == "cached":
+            note = " (recorded results)"
+        elif getattr(self.sandbox, "isolated", False):
+            note = ""
+        else:
+            note = " (NOT ISOLATED)"
+        self.recorder.event("TEST", f"Attempt {attempt}: running checks + tests in {engine} sandbox{note}...")
         regression = self.state.created_tests[-1] if self.state.created_tests else None
         original = self._original_with_tests() if regression else None
         result = self.sandbox.run(self.profile, self.ws.root, original, regression)

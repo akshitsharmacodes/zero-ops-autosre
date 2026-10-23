@@ -8,6 +8,7 @@ import { ConnectionGraph } from "@/components/ConnectionGraph"
 import { MttrCard } from "@/components/MttrCard"
 import { SuspectCard } from "@/components/SuspectCard"
 import { PrCard } from "@/components/PrCard"
+import { ReviewPanel } from "@/components/ReviewPanel"
 import { DetailTabs } from "@/components/DetailTabs"
 import { GuardrailsPanel } from "@/components/GuardrailsPanel"
 import { DemoControlSheet } from "@/components/DemoControlSheet"
@@ -82,6 +83,7 @@ export const Dashboard: React.FC = () => {
             <SuspectCard incident={incident} />
             <PrCard incident={incident} />
           </div>
+          <ReviewPanel incident={incident} />
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2"><DetailTabs incident={incident} /></div>
             <GuardrailsPanel checks={guardrails} />

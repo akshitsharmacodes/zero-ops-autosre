@@ -202,8 +202,8 @@ LLM = {
 FRONTEND_URL = env("FRONTEND_URL", default="http://127.0.0.1:5173")
 
 SANDBOX = {
-    # auto = Docker when available, otherwise the clearly-labeled NOT ISOLATED subprocess runner
-    "ENGINE": env("SANDBOX_ENGINE", default="auto"),
+    # cached = recorded check/test results (prototype, no Docker). auto = Docker if it is running.
+    "ENGINE": env("SANDBOX_ENGINE", default="cached"),
     "TIMEOUT_SECONDS": env.int("SANDBOX_TIMEOUT_SECONDS", default=120),
     "MEMORY": env("SANDBOX_MEMORY", default="512m"),
     "CPUS": env.float("SANDBOX_CPUS", default=1.0),

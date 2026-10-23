@@ -90,7 +90,9 @@ export const DetailTabs: React.FC<{ incident?: Incident }> = ({ incident }) => {
                   <span className="text-zinc-600 font-mono">{clock(r.ts)}</span>
                   <Badge variant={r.passed ? "success" : "destructive"} className="text-[10px]">{r.passed ? "PASSED" : r.timed_out ? "TIMEOUT" : "FAILED"}</Badge>
                   <span className="text-zinc-300">{TASK_LABEL[r.task as keyof typeof TASK_LABEL] || r.task} · attempt {r.attempt}</span>
-                  <Badge variant={r.isolated ? "outline" : "warning"} className="text-[10px]">{r.engine}{r.isolated ? "" : " · NOT isolated"}</Badge>
+                  <Badge variant={r.isolated ? "outline" : r.engine === "cached" ? "info" : "warning"} className="text-[10px]">
+                    {r.engine}{r.isolated || r.engine === "cached" ? "" : " · NOT isolated"}
+                  </Badge>
                   {r.reproduced !== null && (
                     <span className={r.reproduced ? "text-emerald-400" : "text-red-400"}>
                       regression test {r.reproduced ? "fails on old code ✓" : "does NOT fail on old code ✗"}

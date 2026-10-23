@@ -25,12 +25,13 @@ const Chip: React.FC<{ ok: boolean | null; icon: React.ElementType; label: strin
 
 export const Header: React.FC<HeaderProps> = ({ system, backendError, incident, onOpenControls }) => {
   // FR-9.3: always say when the run is not fully live or not fully isolated.
+  const cachedChecks = system?.sandbox.engine === "cached"
   const banners: string[] = []
   if (backendError) banners.push(backendError)
   if (incident?.mode === "replay") banners.push(`REPLAY: ${incident.id} is a playback of a recorded run — nothing is being executed.`)
   else if (incident?.llm?.fallback_used) banners.push(`LLM unreachable (${incident.llm.fallback_reason}) — this incident used CACHED recorded decisions.`)
-  else if (system?.mode === "cached") banners.push("CACHED mode: the agent replays recorded decisions; files, guardrails and sandbox still run for real.")
-  if (system && !system.sandbox.isolated) banners.push("Docker is not running — sandbox runs are NOT ISOLATED (subprocess fallback).")
+  else if (system?.mode === "cached" && !cachedChecks) banners.push("CACHED mode: the agent replays recorded decisions; files, guardrails and sandbox still run for real.")
+  if (system && !cachedChecks && !system.sandbox.isolated) banners.push("Docker is not running — sandbox runs are NOT ISOLATED (subprocess fallback).")
 
   return (
     <header className="border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md sticky top-0 z-40">
@@ -59,7 +60,8 @@ export const Header: React.FC<HeaderProps> = ({ system, backendError, incident, 
             <>
               <Chip ok={system.database.reachable} icon={Database}
                     label={system.database.reachable ? "DB connected" : "DB unreachable"} title={system.database.error || system.database.host} />
-              <Chip ok={system.sandbox.isolated} icon={Box} label={system.sandbox.isolated ? "Docker sandbox" : "Sandbox NOT isolated"} />
+              <Chip ok={cachedChecks ? true : system.sandbox.isolated} icon={Box}
+                    label={cachedChecks ? "Cached checks" : system.sandbox.isolated ? "Docker sandbox" : "Sandbox NOT isolated"} />
               <Chip ok={system.mode !== "live" || system.llm.configured} icon={Bot}
                     label={system.mode === "live" ? `${system.llm.provider}${system.llm.configured ? "" : " (no key)"}` : "Cached brain"}
                     title={system.llm.model} />

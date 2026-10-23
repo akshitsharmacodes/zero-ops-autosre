@@ -41,6 +41,7 @@ class PRStatus:
     head_sha: str
     base_branch: str
     head_branch: str
+    conflict_files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -129,15 +130,20 @@ class LocalProvider(DeliveryProvider):
         data = self._load(number)
         head_sha = self._rev(data["head"])
         conflicts = False
+        conflict_files: list[str] = []
         if data["state"] == "open":
             # Would merging the branch into base conflict? Computed without touching any files.
+            # First line is the result tree; every later line is a conflicted path.
             out = git("merge-tree", "--write-tree", "--name-only", "--no-messages", data["base"], data["head"],
                       cwd=self.origin, check=False)
-            conflicts = len(out.strip().splitlines()) > 1
+            lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+            conflict_files = lines[1:]
+            conflicts = len(lines) > 1
         return PRStatus(
             number=number, url=f"local://{self.origin.name}/pull/{number}", state=data["state"],
             draft=data["draft"], mergeable=None if data["state"] != "open" else not conflicts, conflicts=conflicts,
             head_sha=head_sha, base_branch=data["base"], head_branch=data["head"],
+            conflict_files=conflict_files,
         )
 
     def checks(self, pr: PRStatus) -> ChecksStatus:

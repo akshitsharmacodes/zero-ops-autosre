@@ -5,7 +5,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
-  useConfig, useGitHubDisconnect, useGitHubStatus, useReplay, useReset, useTraffic, useTriggerDemo, useUpdateConfig,
+  useConfig, useGitHubDisconnect, useGitHubStatus, usePrototype, useReplay, useReset, useTraffic, useTriggerDemo, useUpdateConfig,
 } from "@/hooks/useAutoSRE"
 import { api } from "@/lib/api"
 import type { RunMode, SystemStatus } from "@/types/api"
@@ -23,6 +23,7 @@ export const DemoControlSheet: React.FC<Props> = ({ open, onClose, system, onInc
   const config = useConfig().data
   const traffic = useTraffic().data
   const update = useUpdateConfig()
+  const play = usePrototype()
   const trigger = useTriggerDemo()
   const replay = useReplay()
   const reset = useReset()
@@ -45,9 +46,30 @@ export const DemoControlSheet: React.FC<Props> = ({ open, onClose, system, onInc
         </SheetHeader>
 
         <section className="space-y-2">
+          <h3 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Play the prototype</h3>
+          <p className="text-[11px] text-zinc-500">
+            No Docker. Cached checks find the leak, open a pull request, then a real commit on main creates a merge
+            conflict. AutoSRE combines both changes and shows the commit, the conflict, the check, and the fix.
+          </p>
+          <Button variant="sre" className="w-full gap-2" disabled={play.isPending}
+                  onClick={() => play.mutate(undefined, {
+                    onSuccess: (r) => {
+                      onIncidentCreated(r.incident.id)
+                      toast.success("Prototype playing", { description: r.message })
+                      onClose()
+                    },
+                    onError: err,
+                  })}>
+            <Play className="h-4 w-4" /> {play.isPending ? "Starting…" : "Play prototype"}
+          </Button>
+        </section>
+
+        <Separator className="bg-zinc-800" />
+
+        <section className="space-y-2">
           <h3 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">1 · Start an incident</h3>
           <p className="text-[11px] text-zinc-500">
-            Sends real HTTP traffic to the victim service ({system?.victim.base_url}). Its leaky report exhausts PostgreSQL;
+            Needs the victim service and PostgreSQL ({system?.victim.base_url}). Sends real HTTP traffic;
             the monitor raises the alert on its own.
           </p>
           <Button variant="sre" className="w-full gap-2" disabled={trigger.isPending || traffic?.running}
