@@ -112,6 +112,7 @@ def test_full_loop_fix_pr_conflict_ready_merged_tc13(env):
     body = rec.fields["postmortem"]
     for section in ("### Summary", "### Impact", "### Root cause", "### Fix", "### Verification", "### Timeline", "### Prevention"):
         assert section in body
+    assert "NOT-isolated subprocess fallback" in body  # never claims isolation it did not have
     assert "autosre_agent_pw" not in json.dumps(rec.audits)  # secrets never reach prompts
     assert any(e["tag"] == "LOOP" and "repaired" in e["message"] for e in rec.events)
 

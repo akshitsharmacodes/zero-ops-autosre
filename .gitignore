@@ -29,3 +29,4 @@ victim_service/.git
 # AutoSRE runtime data (seeded repos, sandbox temp, deliveries, logs)
 var/
 .env
+*.tsbuildinfo

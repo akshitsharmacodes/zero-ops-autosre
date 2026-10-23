@@ -1,78 +1,56 @@
 import React, { useEffect, useState } from "react"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Timer, Zap, TrendingDown, Clock } from "lucide-react"
+import { Timer } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { duration, secondsBetween } from "@/lib/format"
+import type { Incident } from "@/types/api"
 
-interface MttrCardProps {
-  mttrSeconds: number
-  isRunning: boolean
-}
+const MANUAL_MTTR_SECONDS = 45 * 60 // typical manual response, for comparison (AO-1)
 
-export const MttrCard: React.FC<MttrCardProps> = ({ mttrSeconds, isRunning }) => {
-  const [timer, setTimer] = useState(mttrSeconds || 38)
-
+export const MttrCard: React.FC<{ incident?: Incident }> = ({ incident }) => {
+  const [, tick] = useState(0)
+  const running = !!incident && !incident.ready_at && !incident.finished_at
   useEffect(() => {
-    if (isRunning) {
-      const interval = setInterval(() => {
-        setTimer((prev) => prev + 1)
-      }, 1000)
-      return () => clearInterval(interval)
-    } else if (mttrSeconds > 0) {
-      setTimer(mttrSeconds)
-    }
-  }, [isRunning, mttrSeconds])
+    if (!running) return
+    const t = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [running])
+
+  const toFix = incident ? (incident.mttr_seconds ?? secondsBetween(incident.created_at, null)) : null
+  const toMitigate = incident?.time_to_mitigate_seconds ?? null
+  const pct = toFix ? Math.min(100, (toFix / MANUAL_MTTR_SECONDS) * 100) : 0
 
   return (
-    <Card className="border-zinc-800 bg-gradient-to-br from-zinc-950 via-zinc-950 to-emerald-950/20 p-5 relative overflow-hidden">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
-            <Timer className="h-4 w-4 text-emerald-400" />
-          </div>
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 font-mono">
-              Mean Time to Remediate (MTTR)
-            </h3>
-            <p className="text-[11px] text-zinc-500">Autonomous Incident Life Cycle</p>
-          </div>
-        </div>
-
-        <Badge variant={isRunning ? "warning" : "success"} className="font-mono text-xs">
-          {isRunning ? "TIMER RUNNING" : "RESOLVED"}
-        </Badge>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 items-center">
-        {/* AutoSRE Running Timer */}
-        <div className="p-3 rounded-lg bg-zinc-900/60 border border-zinc-800">
-          <span className="text-[11px] text-zinc-400 font-mono">AutoSRE Autonomous</span>
-          <div className="flex items-baseline gap-1 mt-1">
-            <span className="text-3xl font-extrabold tracking-tight text-emerald-400 font-mono">
-              {timer}s
-            </span>
-            <span className="text-xs text-zinc-500 font-mono">elapsed</span>
-          </div>
-          <div className="flex items-center gap-1 text-[10px] text-emerald-400/90 mt-1 font-mono">
-            <Zap className="h-3 w-3" />
-            <span>98.6% faster response</span>
-          </div>
-        </div>
-
-        {/* Manual Benchmark */}
-        <div className="p-3 rounded-lg bg-zinc-900/60 border border-zinc-800">
-          <span className="text-[11px] text-zinc-400 font-mono">Manual On-Call Benchmark</span>
-          <div className="flex items-baseline gap-1 mt-1">
-            <span className="text-3xl font-extrabold tracking-tight text-zinc-400 font-mono">
-              ~45m
-            </span>
-            <span className="text-xs text-zinc-500 font-mono">average</span>
-          </div>
-          <div className="flex items-center gap-1 text-[10px] text-zinc-400 mt-1 font-mono">
-            <Clock className="h-3 w-3" />
-            <span>P1 Human triage SLA</span>
-          </div>
-        </div>
-      </div>
+    <Card className="border-zinc-800 bg-zinc-950">
+      <CardHeader className="py-2.5 px-4 border-b border-zinc-800/80 bg-zinc-900/50 space-y-0 flex flex-row items-center gap-2">
+        <Timer className="h-4 w-4 text-emerald-400" />
+        <CardTitle className="text-xs uppercase tracking-wider font-bold text-zinc-200">Time to recovery</CardTitle>
+      </CardHeader>
+      <CardContent className="p-4 space-y-3">
+        {!incident ? (
+          <p className="text-xs text-zinc-500">Starts when an alert arrives.</p>
+        ) : (
+          <>
+            <div>
+              <div className="text-[11px] text-zinc-400">Service restored (stop-the-bleeding)</div>
+              <div className="text-xl font-mono font-bold text-orange-300">{toMitigate !== null ? duration(toMitigate) : running ? "…" : "—"}</div>
+            </div>
+            <div>
+              <div className="text-[11px] text-zinc-400">Alert → verified fix ready to merge {running && "(running)"}</div>
+              <div className={`text-2xl font-mono font-bold ${incident.status === "ESCALATED" ? "text-red-400" : "text-emerald-400"}`}>
+                {duration(toFix)}
+              </div>
+            </div>
+            <div>
+              <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
+                <span>AutoSRE</span><span>typical manual ≈ 45 min</span>
+              </div>
+              <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+                <div className="h-full bg-emerald-500 transition-all" style={{ width: `${Math.max(pct, 1)}%` }} />
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
     </Card>
   )
 }
