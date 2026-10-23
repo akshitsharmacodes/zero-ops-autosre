@@ -153,6 +153,7 @@ GUARDRAIL_ORDER = [
     ("secret_scan", "No secrets in patch"),
     ("dangerous_patterns", "Dangerous pattern blocklist"),
     ("syntax", "Changed files parse"),
+    ("prompt_injection", "Prompt-injection screen"),
     ("sandbox_isolation", "Sandbox isolation"),
     ("retry_cap", "Retry cap"),
     ("human_gate", "No direct push to main; human merges"),

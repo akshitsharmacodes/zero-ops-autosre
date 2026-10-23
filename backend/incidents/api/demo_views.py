@@ -108,7 +108,8 @@ def reset(request):
         result["incidents_deleted"] = Incident.objects.all().delete()[0]
         TelemetrySample.objects.all().delete()
     if body.get("reseed_repo"):
-        sys.path.insert(0, str(settings.REPO_ROOT / "scripts"))
+        if str(settings.REPO_ROOT / "scripts") not in sys.path:
+            sys.path.append(str(settings.REPO_ROOT / "scripts"))  # never shadow backend packages
         from seed_victim_repo import seed
 
         seed(settings.VAR_DIR, force=True)

@@ -79,3 +79,54 @@ def test_client_retries_after_rate_limit_using_server_hint():
     assert calls["n"] == 2 and waits == [7.0]
     assert sent["extra_body"] == {"reasoning_effort": "low"}  # gpt-oss keeps hidden reasoning short
     assert client.prompt_budget == 8000 - 1024 - OpenAICompatClient.SAFETY_MARGIN_TOKENS
+
+
+def _rate_limit(msg, retry_after=None):
+    headers = {"retry-after": retry_after} if retry_after else {}
+    resp = httpx.Response(429, request=httpx.Request("POST", "https://x"), headers=headers)
+    return openai.RateLimitError(msg, response=resp, body=None)
+
+
+def test_daily_quota_fails_fast_and_fallback_switches_model():
+    from agent.coding.llm import FallbackChatClient, LLMQuotaExhausted, LLMUnavailable
+
+    def make(model, error=None):
+        waits = []
+        c = OpenAICompatClient(LLMSettings("groq", "https://x", "gsk_test_key_not_real_123456", model), sleep=waits.append)
+
+        def create(**kwargs):
+            if error:
+                raise error
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=model, tool_calls=[]))],
+                                   usage=None)
+
+        c._client.chat.completions.create = create
+        return c, waits
+
+    daily = _rate_limit("Rate limit reached on tokens per day (TPD): Limit 200000. Please try again in 18m36.288s.")
+    primary, waits = make("openai/gpt-oss-120b", daily)
+    try:
+        primary.complete([], [])
+        raise AssertionError("expected LLMQuotaExhausted")
+    except LLMQuotaExhausted:
+        assert waits == []  # no pointless retries
+
+    switches = []
+    backup, _ = make("openai/gpt-oss-20b")
+    chain = FallbackChatClient([primary, backup], on_switch=lambda a, b, why: switches.append((a, b)))
+    assert chain.complete([], []).content == "openai/gpt-oss-20b"
+    assert switches == [("openai/gpt-oss-120b", "openai/gpt-oss-20b")] and chain.model == "openai/gpt-oss-20b"
+
+    only_dead = FallbackChatClient([make("m", daily)[0]])
+    try:
+        only_dead.complete([], [])
+        raise AssertionError("expected LLMUnavailable")
+    except LLMUnavailable:
+        pass
+
+
+def test_retry_hint_parsing_handles_minutes():
+    c = OpenAICompatClient(LLMSettings("groq", "https://x", "gsk_test_key_not_real_123456", "m"))
+    assert c._retry_after(_rate_limit("Please try again in 18m36.288s."), cap=False) > 1100
+    assert c._retry_after(_rate_limit("Please try again in 7.5s.")) == 7.5
+    assert c._retry_after(_rate_limit("Please try again in 120ms.")) == 1.0

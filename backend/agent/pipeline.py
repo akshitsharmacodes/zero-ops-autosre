@@ -26,6 +26,7 @@ from delivery.providers import DeliveryError, DeliveryProvider, PRStatus
 from diagnostics.diagnosis import build_diagnosis
 from diagnostics.logs import summarize_log_file
 from diagnostics.mitigation import stop_the_bleeding
+from guardrails.injection import HeuristicInjectionDetector, InjectionScreen
 from guardrails.rules import GuardrailPolicy, branch_check
 from project.profile import ProfileError, load_profile
 from telemetry import DatabaseAdapter, TelemetryUnavailable
@@ -34,7 +35,7 @@ from workspace.workspace import Workspace
 
 from .coding.briefing import CodeBriefing
 from .coding.llm import ChatClient
-from .coding.prompts import ci_task_prompt, conflict_task_prompt, fix_task_prompt, scrub, system_prompt
+from .coding.prompts import TaskBrief, ci_brief, conflict_brief, fix_brief, system_prompt
 from .coding.recordings import recording_for_conflict, recording_for_fix
 from .coding.session import run_coding_task
 from .coding.tools import ToolBox
@@ -91,6 +92,8 @@ class AgentDeps:
     started_at: datetime
     baseline: Callable[[], dict | None] = lambda: None
     sleep: Callable[[float], None] = time.sleep
+    # Prompt-injection screen for untrusted evidence (heuristics; wiring adds Prompt Guard in live mode)
+    injection_screen: InjectionScreen = field(default_factory=lambda: InjectionScreen([HeuristicInjectionDetector()]))
     ctx: dict = field(default_factory=dict)  # runtime objects (workspace, policy) shared between nodes
 
 
@@ -194,10 +197,7 @@ def node_fix(state: PipelineState, deps: AgentDeps) -> dict:
         rec.event("TEST", "WARNING: Docker is unavailable - sandbox runs are NOT ISOLATED (subprocess fallback).")
 
     briefing = CodeBriefing(ws).render(suspect.get("location", {}).get("file") or suspect["primary_file"])
-    task, redacted = scrub(fix_task_prompt(state["incident_id"], state["diagnosis"], suspect, briefing),
-                           cfg.secret_values)
-    if redacted:
-        rec.event("GUARD", f"Redacted {redacted} secret-like value(s) before sending context to the LLM.")
+    task = _prepare_brief(fix_brief(state["incident_id"], state["diagnosis"], suspect, briefing), deps, attempt=0)
     rec.event("PATCH", f"Starting the coding agent ({deps.mode} mode, up to {cfg.max_attempts} test attempts).")
 
     def make_toolbox():
@@ -361,16 +361,16 @@ def _repair(state: PipelineState, deps: AgentDeps, status: PRStatus, task: str, 
                 raise Escalate(f"merge conflict in files AutoSRE may not edit: {', '.join(outside)}")
             rec.event("LOOP", f"Conflicted files: {', '.join(conflicted)}. Asking the coding agent to combine both sides.")
             recording = recording_for_conflict({p: ws.read_file(p) for p in conflicted})
-            prompt = conflict_task_prompt(state["incident_id"], cfg.base_branch, conflicted, fix["summary"],
+            brief = conflict_brief(state["incident_id"], cfg.base_branch, conflicted, fix["summary"],
                                           ws.log_between(old_base, f"origin/{cfg.base_branch}"))
 
             def restart():
                 ws.reset_hard()
                 ws.merge_base_branch()
         else:
-            prompt = ci_task_prompt(state["incident_id"], ci_failures)
+            brief = ci_brief(state["incident_id"], ci_failures)
             restart = ws.reset_hard
-        prompt, _ = scrub(prompt, cfg.secret_values)
+        prompt = _prepare_brief(brief, deps, attempt=fix["attempts"])
 
         def make_toolbox():
             tb = ToolBox(ws, profile, policy, deps.sandbox, rec, task, cfg.max_attempts, False,
@@ -418,6 +418,31 @@ def node_escalate(state: PipelineState, deps: AgentDeps) -> dict:
 
 
 # --- helpers -----------------------------------------------------------------------------------
+def _prepare_brief(brief: TaskBrief, deps: AgentDeps, attempt: int) -> str:
+    """Scrub secrets + screen untrusted evidence for prompt injection; record the verdict."""
+    rec = deps.recorder
+    brief.prepare(deps.config.secret_values, deps.injection_screen)
+    if brief.redactions:
+        rec.event("GUARD", f"Redacted {brief.redactions} secret-like value(s) before sending context to the LLM.")
+    flagged = brief.injection_findings
+    detectors = ", ".join(d.name for d in deps.injection_screen.detectors)
+    if flagged:
+        removed = sum(s.neutralized for s in flagged)
+        where = ", ".join(f"{s.source} ({s.findings[0].detector}: {s.findings[0].reason})" for s in flagged)
+        details = (f"{removed} suspicious line(s) neutralized before reaching the AI - {where}. "
+                   f"Tool guardrails still apply.")
+        rec.event("GUARD", f"Possible PROMPT INJECTION in incident evidence: {details}")
+        rec.audit("prompt_injection", {"findings": [
+            {"source": s.source, "neutralized": s.neutralized,
+             "findings": [f.__dict__ for f in s.findings]} for s in flagged]})
+    else:
+        details = f"All {len(brief.screens)} evidence sources screened ({detectors}); nothing instruction-like found."
+    rec.guardrail(attempt=attempt, check_id="prompt_injection", name="Prompt-injection screen", passed=True,
+                  details=details if not flagged else f"Neutralized: {details}")
+    return brief.render()
+
+
+
 def _postmortem(state: PipelineState, deps: AgentDeps, escalated: str | None = None) -> str:
     fix = state.get("fix", {})
     mitigation = state.get("mitigation", {})

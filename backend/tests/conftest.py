@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.append(str(REPO_ROOT / "scripts"))  # after backend/, so scripts/demo.py never shadows backend/demo
 
 
 @pytest.fixture
@@ -13,3 +13,6 @@ def seeded_repo(tmp_path):
     from seed_victim_repo import seed
 
     return seed(tmp_path / "victim")
+
+
+from .test_pipeline import env  # noqa: E402,F401  (shared end-to-end fixture)

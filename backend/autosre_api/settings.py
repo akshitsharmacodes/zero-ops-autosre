@@ -173,6 +173,9 @@ LLM = {
     "TIMEOUT_SECONDS": env.float("LLM_TIMEOUT_SECONDS", default=60),
     "MAX_OUTPUT_TOKENS": env.int("LLM_MAX_OUTPUT_TOKENS", default=1024),
     "REASONING_EFFORT": env("LLM_REASONING_EFFORT", default="low"),
+    # Prompt-injection classifier (Meta Llama Prompt Guard 2 on Groq), used in live mode
+    "PROMPT_GUARD_ENABLED": env.bool("PROMPT_GUARD_ENABLED", default=True),
+    "PROMPT_GUARD_MODEL": env("PROMPT_GUARD_MODEL", default="meta-llama/llama-prompt-guard-2-86m"),
     "PROVIDERS": {
         "groq": {
             "BASE_URL": env("GROQ_BASE_URL", default="https://api.groq.com/openai/v1"),
@@ -180,12 +183,15 @@ LLM = {
             "MODEL": env("GROQ_MODEL", default="openai/gpt-oss-120b"),
             # Free tier caps tokens per minute; AutoSRE paces itself and trims old context to fit.
             "TOKENS_PER_MINUTE": env.int("GROQ_TOKENS_PER_MINUTE", default=8000),
+            # Tried in order when the primary model's quota (e.g. free daily cap) runs out
+            "FALLBACK_MODELS": env.list("GROQ_FALLBACK_MODELS", default=["openai/gpt-oss-20b", "qwen/qwen3.8-27b"]),
         },
         "nvidia": {
             "BASE_URL": env("NVIDIA_BASE_URL", default="https://integrate.api.nvidia.com/v1"),
             "API_KEY": env("NVIDIA_API_KEY", default=""),
             "MODEL": env("NVIDIA_MODEL", default="nvidia/llama-3.3-nemotron-super-49b-v1.5"),
             "TOKENS_PER_MINUTE": env.int("NVIDIA_TOKENS_PER_MINUTE", default=0),
+            "FALLBACK_MODELS": env.list("NVIDIA_FALLBACK_MODELS", default=[]),
         },
     },
 }

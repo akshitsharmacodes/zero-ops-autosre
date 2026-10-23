@@ -11,6 +11,7 @@ from agent.coding.llm import build_live_client
 from agent.pipeline import AgentDeps, PipelineConfig, run_pipeline
 from correlation.correlator import GitCorrelator
 from delivery.providers import DeliveryError, get_provider
+from guardrails.injection import build_screen
 from sandbox.runner import get_sandbox
 from telemetry import get_adapter
 
@@ -90,9 +91,14 @@ def run_incident(incident_id: str) -> None:
         provider=provider,
         sandbox=get_sandbox(),
         mode=incident.mode,
-        live_client_factory=lambda: build_live_client(config.llm_provider),
+        live_client_factory=lambda: build_live_client(
+            config.llm_provider,
+            on_switch=lambda old, new, why: recorder.event("AGENT", f"Model {old} is out of quota ({why}); switched to {new}."),
+        ),
         config=cfg,
         started_at=incident.created_at,
         baseline=lambda: baseline_for(incident),
+        # Prompt Guard (remote classifier) only when we are allowed to call the LLM provider anyway
+        injection_screen=build_screen(use_remote=incident.mode == "live" and settings.LLM["PROMPT_GUARD_ENABLED"]),
     )
     run_pipeline(incident_id, incident.alert, deps)
