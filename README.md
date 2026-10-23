@@ -280,4 +280,4 @@ AutoSRE is a hackathon-stage engineering project. Its reliability and security d
 
 **Move incident response from alert to verified, reviewable change—with bounded autonomy, explicit evidence, and a human in control.**
 
-Built by **Team Zero-Ops** for the Google Hackathon.
+Built by **Team Zero-Ops** for the CU Hackathon.
