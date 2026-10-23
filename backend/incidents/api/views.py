@@ -69,7 +69,10 @@ def system_status(request):
         "delivery": {
             "provider": delivery["PROVIDER"],
             "target": delivery["GITHUB_REPO"] if delivery["PROVIDER"] == "github" else delivery["LOCAL_ORIGIN"],
-            "configured": bool(delivery["GITHUB_TOKEN"] and delivery["GITHUB_REPO"]) if delivery["PROVIDER"] == "github" else True,
+            "configured": bool((delivery["GITHUB_APP_ID"] or delivery["GITHUB_TOKEN"]) and delivery["GITHUB_REPO"])
+            if delivery["PROVIDER"] == "github" else True,
+            "auth_mode": ("app" if delivery["GITHUB_APP_ID"] else "token" if delivery["GITHUB_TOKEN"] else "none")
+            if delivery["PROVIDER"] == "github" else "local",
         },
         "sandbox": {"engine": "docker" if docker_ok else "subprocess", "isolated": docker_ok, "setting": engine},
         "database": {**db, "engine": settings.TARGET_DB["ENGINE"], "host": settings.TARGET_DB["HOST"]},

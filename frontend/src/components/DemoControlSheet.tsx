@@ -1,10 +1,13 @@
 import React, { useState } from "react"
 import { toast } from "sonner"
-import { Film, Play, RotateCcw, Settings2 } from "lucide-react"
+import { Film, Github, Play, RotateCcw, Settings2 } from "lucide-react"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { useConfig, useReplay, useReset, useTraffic, useTriggerDemo, useUpdateConfig } from "@/hooks/useAutoSRE"
+import {
+  useConfig, useGitHubDisconnect, useGitHubStatus, useReplay, useReset, useTraffic, useTriggerDemo, useUpdateConfig,
+} from "@/hooks/useAutoSRE"
+import { api } from "@/lib/api"
 import type { RunMode, SystemStatus } from "@/types/api"
 
 interface Props {
@@ -23,6 +26,8 @@ export const DemoControlSheet: React.FC<Props> = ({ open, onClose, system, onInc
   const trigger = useTriggerDemo()
   const replay = useReplay()
   const reset = useReset()
+  const github = useGitHubStatus().data
+  const disconnect = useGitHubDisconnect()
   const [clear, setClear] = useState(true)
   const [reseed, setReseed] = useState(false)
 
@@ -92,7 +97,36 @@ export const DemoControlSheet: React.FC<Props> = ({ open, onClose, system, onInc
         <Separator className="bg-zinc-800" />
 
         <section className="space-y-2">
-          <h3 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">3 · Reset</h3>
+          <h3 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5"><Github className="h-3.5 w-3.5" /> 3 · GitHub</h3>
+          {!github || github.provider === "local" ? (
+            <p className="text-[11px] text-zinc-500">Using the local "pretend GitHub" (DELIVERY_PROVIDER=local). See docs/GITHUB_APP_SETUP.md to use real PRs.</p>
+          ) : github.connected ? (
+            <div className="text-[11px] text-zinc-400 space-y-1">
+              <p className="text-emerald-300">Connected to {github.repo}{github.app ? ` as ${github.app.bot_login}` : " (personal token)"}</p>
+              {github.token_expires_in_seconds !== null && <p>Current token renews automatically (expires in {Math.round(github.token_expires_in_seconds / 60)} min).</p>}
+              {github.auth_mode === "app" && (
+                <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={disconnect.isPending}
+                        onClick={() => disconnect.mutate(undefined, { onSuccess: (r) => toast.info(r.note), onError: err })}>
+                  Disconnect
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {github.error && <p className="text-[11px] text-amber-300">{github.error}</p>}
+              {github.auth_mode === "app" && (
+                <a href={api.githubConnectUrl} className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-zinc-100 text-zinc-900 text-sm font-semibold h-9 hover:bg-white">
+                  <Github className="h-4 w-4" /> Connect GitHub
+                </a>
+              )}
+            </div>
+          )}
+        </section>
+
+        <Separator className="bg-zinc-800" />
+
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">4 · Reset</h3>
           <label className="flex items-center gap-2 text-[11px] text-zinc-400">
             <input type="checkbox" checked={clear} onChange={(e) => setClear(e.target.checked)} /> Clear incident history
           </label>

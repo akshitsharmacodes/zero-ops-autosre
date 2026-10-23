@@ -158,6 +158,11 @@ DELIVERY = {
     # local = bare git repo acting as "origin" (works offline); github = real PRs
     "PROVIDER": env("DELIVERY_PROVIDER", default="local"),
     "LOCAL_ORIGIN": env("LOCAL_ORIGIN_PATH", default=str(VAR_DIR / "victim_origin.git")),
+    # Recommended: a GitHub App (its own bot identity, per-repo install, 1-hour tokens).
+    "GITHUB_APP_ID": env("GITHUB_APP_ID", default=""),
+    "GITHUB_APP_PRIVATE_KEY_PATH": env("GITHUB_APP_PRIVATE_KEY_PATH", default=str(REPO_ROOT / "secrets" / "github-app.pem")),
+    "GITHUB_APP_INSTALLATION_ID": env("GITHUB_APP_INSTALLATION_ID", default=""),
+    # Fallback: a fine-grained personal access token.
     "GITHUB_TOKEN": env("GITHUB_TOKEN", default=""),
     "GITHUB_REPO": env("GITHUB_REPO", default=""),
     "LABELS": env.list("PR_LABELS", default=["autosre", "verified"]),
@@ -179,6 +184,9 @@ LLM = {
         },
     },
 }
+
+# Where the GitHub App install flow sends the browser back to.
+FRONTEND_URL = env("FRONTEND_URL", default="http://127.0.0.1:5173")
 
 SANDBOX = {
     # auto = Docker when available, otherwise the clearly-labeled NOT ISOLATED subprocess runner

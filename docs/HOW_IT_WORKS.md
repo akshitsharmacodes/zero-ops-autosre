@@ -189,6 +189,14 @@ The same idea applies to databases. AutoSRE talks to them through **adapters**, 
 - `python scripts/setup.py` prepares everything, `python scripts/dev.py` runs the backend and dashboard, and `python scripts/demo.py --conflict --merge` plays the whole story from the terminal.
 - The test suite covers every test case in the SRS (TC-1 to TC-14), plus a full offline story. Tests that need Docker or PostgreSQL skip themselves until those are running.
 
+### Add-on: GitHub App (AutoSRE's own robot identity)
+- **What it is:** a robot account you *install* on chosen repositories, like adding an app to your phone. Pull requests show up as `autosre-zero-ops[bot]`, not as you.
+- **OAuth vs. GitHub App:** OAuth hands AutoSRE a copy of *your* house key: it acts as you, usually on all your repos. A GitHub App is a contractor with its own badge: only the rooms you allow, only the jobs you allow, and the badge expires every hour.
+- **How the hourly badge works:** AutoSRE keeps a private key file on your laptop. When it needs GitHub, it signs a short note with that key ("I am App 123456"), GitHub checks the signature, and it hands back a token valid for 1 hour, limited to *contents*, *pull requests*, *checks* and *statuses*. AutoSRE reuses that token and fetches a new one 5 minutes before it expires.
+- **The Connect button:** sends you to GitHub to pick the repo, then GitHub sends you back with an installation number. A one-time random `state` value proves the callback really came from *your* click, so nobody can trick AutoSRE into using someone else's installation.
+- **Where secrets live:** the `.pem` file stays in the git-ignored `secrets/` folder. Tokens travel in a hidden HTTP header (never in URLs or logs), and anything that looks like a token is scrubbed before text reaches the AI.
+- Setup steps: [GITHUB_APP_SETUP.md](GITHUB_APP_SETUP.md).
+
 ---
 
 ## 7. Running the demo (what to say while it runs)

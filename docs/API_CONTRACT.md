@@ -153,6 +153,25 @@ PATCH accepts any subset:
 
 Changes apply to **new** incidents.
 
+### GitHub connection (GitHub App)
+| Method | Path | Result |
+|---|---|---|
+| GET | `/github/status` | `GitHubStatus` (below) |
+| GET | `/github/connect` | **302 redirect** to GitHub's install page. Use a normal link or full-page navigation, not `fetch`. |
+| GET | `/github/callback` | GitHub sends the browser here. The backend then redirects to `FRONTEND_URL/?github=connected` or `/?github=error&reason=...`. Read these query params on load and show a toast. |
+| POST | `/github/disconnect` | `{ disconnected: true, note }` |
+
+```json
+{ "provider": "github", "repo": "you/victim-service", "auth_mode": "app",
+  "connected": true, "installation_id": 777, "account": "you",
+  "app": { "app_slug": "autosre-zero-ops", "app_name": "AutoSRE Zero-Ops", "bot_login": "autosre-zero-ops[bot]",
+           "install_url": "https://github.com/apps/autosre-zero-ops/installations/new" },
+  "token_expires_in_seconds": 3412, "error": null }
+```
+`auth_mode`: `app` | `token` | `none`. Show **Connect GitHub** when `auth_mode === "app"` and `connected` is false.
+With `provider: "local"`, there's nothing to connect.
+`/system` → `delivery.auth_mode` is `local` | `app` | `token` | `none`.
+
 ### Demo controls
 | Method | Path | Body | `data` |
 |---|---|---|---|

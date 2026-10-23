@@ -142,11 +142,12 @@ class GitCorrelator:
         self.lookback_commits = lookback_commits
         self.lookback_days = lookback_days
 
-    def refresh(self) -> str:
-        """Update the working clone from origin (if it has one) and return the ref to analyze."""
+    def refresh(self, git_env: dict | None = None) -> str:
+        """Update the working clone from origin (if it has one) and return the ref to analyze.
+        git_env carries short-lived credentials for private repositories (never stored)."""
         remotes = git("remote", cwd=self.repo).split()
         if "origin" in remotes:
-            git("fetch", "--quiet", "origin", self.base_branch, cwd=self.repo, timeout=60)
+            git("fetch", "--quiet", "origin", self.base_branch, cwd=self.repo, timeout=60, env=git_env)
             return f"origin/{self.base_branch}"
         return self.base_branch
 
@@ -163,9 +164,9 @@ class GitCorrelator:
                             "date": date, "message": subject})
         return commits
 
-    def correlate(self, evidence: dict) -> dict:
+    def correlate(self, evidence: dict, git_env: dict | None = None) -> dict:
         try:
-            ref = self.refresh()
+            ref = self.refresh(git_env)
             base_sha = git("rev-parse", ref, cwd=self.repo).strip()
             commits = self.recent_commits(ref)
         except GitError as exc:

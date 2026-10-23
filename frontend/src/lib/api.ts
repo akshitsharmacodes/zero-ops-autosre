@@ -4,6 +4,7 @@ import type {
   ApiResponse,
   ConnectionHistoryPoint,
   ConnectionTelemetry,
+  GitHubStatus,
   GuardrailCheck,
   Incident,
   IncidentSummary,
@@ -72,6 +73,10 @@ export const api = {
   teammatePush: () => post<{ sha: string }>("/demo/teammate-push"),
   merge: (id: string) => post<{ merged: boolean; sha: string }>(`/incidents/${id}/merge`),
   reset: (opts: { clear_incidents?: boolean; reseed_repo?: boolean }) => post<Record<string, unknown>>("/demo/reset", opts),
+  githubStatus: () => request<GitHubStatus>("/github/status"),
+  githubDisconnect: () => post<{ disconnected: boolean; note: string }>("/github/disconnect"),
+  /** Full-page navigation: the backend redirects to GitHub's install page, then back to the dashboard. */
+  githubConnectUrl: `${BASE_URL}/api/v1/github/connect`,
   auditUrl: (id: string) => `${BASE_URL}/api/v1/incidents/${id}/audit`,
 }
 

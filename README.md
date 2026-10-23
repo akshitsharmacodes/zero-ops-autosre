@@ -60,13 +60,14 @@ LLM_PROVIDER=groq            # or nvidia
 GROQ_API_KEY=...             # NVIDIA_API_KEY=... for Nemotron
 
 DELIVERY_PROVIDER=github
-GITHUB_REPO=your-org/victim-service
-GITHUB_TOKEN=...             # fine-grained: Contents, Pull requests, Checks (read/write) on that repo only
-TARGET_REPO_PATH=...         # a local clone of that repo (AutoSRE reads history from it)
+GITHUB_REPO=your-user/victim-service
+GITHUB_APP_ID=123456                         # AutoSRE's GitHub App (PRs by autosre[bot], 1-hour tokens)
+GITHUB_APP_PRIVATE_KEY_PATH=secrets/github-app.pem
+TARGET_REPO_PATH=var/victim_repo_github      # a local clone of that repo (AutoSRE reads history from it)
 ```
 
-To push the seeded victim history to your GitHub repo:
-`git -C var/victim_repo push https://github.com/your-org/victim-service.git main`.
+Then go to **Controls → Connect GitHub**. Full click-by-click guide: [docs/GITHUB_APP_SETUP.md](docs/GITHUB_APP_SETUP.md).
+A fine-grained personal token (`GITHUB_TOKEN`) still works as a fallback.
 
 If the LLM can't be reached during an incident, AutoSRE falls back to recorded decisions and says so.
 
@@ -106,6 +107,7 @@ scripts/                 setup.py, dev.py, demo.py, seed_victim_repo.py
 | GET | `/guardrails?incident_id=` | guardrail checklist |
 | GET | `/telemetry/connections`, `/telemetry/connections/history` | live and recent connection counts |
 | GET/PATCH | `/config` | mode, LLM provider, max attempts, alert threshold |
+| GET/POST | `/github/status` · `/github/connect` · `/github/callback` · `/github/disconnect` | GitHub App connection |
 | POST | `/demo/trigger`, `/demo/replay`, `/demo/teammate-push`, `/demo/reset` | demo controls |
 
 ## Guardrails

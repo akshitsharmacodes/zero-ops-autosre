@@ -149,7 +149,10 @@ def node_correlate(state: PipelineState, deps: AgentDeps) -> dict:
     rec.set_status("CORRELATING")
     rec.event("CORR", "Scoring recent commits against the evidence (query text, failing route, stack frames)...")
     try:
-        suspect = deps.correlator.correlate(state["diagnosis"]["evidence"])
+        _, git_env = deps.provider.clone_source()  # credentials for private repos
+        suspect = deps.correlator.correlate(state["diagnosis"]["evidence"], git_env=git_env)
+    except DeliveryError as exc:
+        raise Escalate(f"cannot authenticate to the repository: {exc}") from exc
     except CorrelationFailed as exc:
         raise Escalate(f"could not identify the change that caused this: {exc}") from exc
     rec.update(suspect=suspect)
@@ -169,10 +172,11 @@ def node_fix(state: PipelineState, deps: AgentDeps) -> dict:
     rec.set_status("PATCHING")
     suspect = state["suspect"]
     branch = f"autosre/fix-{state['incident_id'].lower()}"
-    source, env = deps.provider.clone_source()
     try:
-        ws = Workspace.create(source, cfg.base_branch, branch, parent_dir=cfg.work_dir, git_env=env)
-    except GitError as exc:
+        source, env = deps.provider.clone_source()
+        ws = Workspace.create(source, cfg.base_branch, branch, parent_dir=cfg.work_dir, git_env=env,
+                              author=deps.provider.commit_identity())
+    except (GitError, DeliveryError) as exc:
         raise Escalate(f"could not create a workspace clone: {exc}") from exc
     deps.ctx["workspace"] = ws
     try:
@@ -334,7 +338,8 @@ def _repair(state: PipelineState, deps: AgentDeps, status: PRStatus, task: str, 
             ci_failures: str = "") -> None:
     rec, cfg = deps.recorder, deps.config
     source, env = deps.provider.clone_source()
-    ws = Workspace.create(source, cfg.base_branch, status.head_branch, parent_dir=cfg.work_dir, git_env=env)
+    ws = Workspace.create(source, cfg.base_branch, status.head_branch, parent_dir=cfg.work_dir, git_env=env,
+                          author=deps.provider.commit_identity())
     try:
         old_base = git("merge-base", "HEAD", f"origin/{cfg.base_branch}", cwd=ws.root).strip()
         profile = load_profile(ws.root)

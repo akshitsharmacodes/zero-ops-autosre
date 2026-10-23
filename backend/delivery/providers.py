@@ -81,6 +81,10 @@ class DeliveryProvider(ABC):
     @abstractmethod
     def comment(self, number: int, body: str) -> None: ...
 
+    def commit_identity(self) -> tuple[str, str] | None:
+        """(name, email) used for AutoSRE's commits; None = generic 'AutoSRE Bot'."""
+        return None
+
 
 # ---------------------------------------------------------------------------------------
 class LocalProvider(DeliveryProvider):
@@ -175,29 +179,58 @@ class LocalProvider(DeliveryProvider):
 class GitHubProvider(DeliveryProvider):
     name = "github"
 
-    def __init__(self, token: str, repo: str, timeout: int = 20):
-        if not token or not repo:
-            raise DeliveryError("GITHUB_TOKEN and GITHUB_REPO must be set for GitHub delivery")
-        from github import Auth, Github
-
-        self.token = token
+    def __init__(self, credentials, repo: str, timeout: int = 20):
+        """credentials: delivery.github_auth.AppCredentials (recommended) or TokenCredentials."""
+        if not repo:
+            raise DeliveryError("GITHUB_REPO must be set for GitHub delivery")
+        self.credentials = credentials
         self.repo_name = repo
-        self.gh = Github(auth=Auth.Token(token), timeout=timeout, retry=2)
+        self.timeout = timeout
+        self._gh = None
+        self._gh_token = None
         self._repo = None
 
     @property
+    def gh(self):
+        from github import Auth, Github
+
+        from .github_auth import GitHubAuthError
+
+        try:
+            token = self.credentials.token()  # renewed automatically before it expires
+        except GitHubAuthError as exc:
+            raise DeliveryError(str(exc)) from exc
+        if token != self._gh_token:
+            self._gh = Github(auth=Auth.Token(token), timeout=self.timeout, retry=2)
+            self._gh_token, self._repo = token, None
+        return self._gh
+
+    @property
     def repo(self):
+        gh = self.gh
         if self._repo is None:
-            self._repo = self.gh.get_repo(self.repo_name)
+            self._repo = gh.get_repo(self.repo_name)
         return self._repo
 
     def clone_source(self) -> tuple[str, dict]:
         # The token travels in an HTTP header via environment config, never in the URL or
         # on the command line, so it can't leak into logs or `ps` output.
-        basic = base64.b64encode(f"x-access-token:{self.token}".encode()).decode()
+        from .github_auth import GitHubAuthError
+
+        try:
+            token = self.credentials.token()
+        except GitHubAuthError as exc:
+            raise DeliveryError(str(exc)) from exc
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
         env = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
                "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}"}
         return f"https://github.com/{self.repo_name}.git", env
+
+    def commit_identity(self) -> tuple[str, str] | None:
+        try:
+            return self.credentials.identity()
+        except Exception:
+            return None
 
     def open_pr(self, head, base, title, body, labels) -> PRStatus:
         from github import GithubException
@@ -287,7 +320,15 @@ def get_provider() -> DeliveryProvider:
 
     cfg = settings.DELIVERY
     if cfg["PROVIDER"] == "github":
-        return GitHubProvider(cfg["GITHUB_TOKEN"], cfg["GITHUB_REPO"])
+        from incidents.models import RuntimeConfig
+
+        from .github_auth import GitHubAuthError, build_credentials
+
+        try:
+            creds = build_credentials(cfg, RuntimeConfig.load().github_installation_id)
+        except GitHubAuthError as exc:
+            raise DeliveryError(str(exc)) from exc
+        return GitHubProvider(creds, cfg["GITHUB_REPO"])
     return LocalProvider(cfg["LOCAL_ORIGIN"], settings.VAR_DIR / "local_prs")
 
 

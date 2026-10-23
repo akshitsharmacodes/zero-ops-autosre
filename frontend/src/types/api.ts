@@ -196,6 +196,18 @@ export interface TrafficStatus {
   target: number
 }
 
+export interface GitHubStatus {
+  provider: "local" | "github"
+  repo: string
+  auth_mode: "app" | "token" | "none"
+  connected: boolean
+  installation_id: number | null
+  account: string
+  app: { mode: "app"; app_slug: string; app_name: string; bot_login: string; install_url: string } | null
+  token_expires_in_seconds: number | null
+  error: string | null
+}
+
 export interface ApiError {
   code: string
   message: string

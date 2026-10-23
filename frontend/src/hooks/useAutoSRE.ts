@@ -39,6 +39,8 @@ export const useTelemetry = () =>
 export const useTelemetryHistory = () =>
   useQuery({ queryKey: ["telemetry-history"], queryFn: () => api.telemetryHistory(10), refetchInterval: 2000 })
 export const useTraffic = () => useQuery({ queryKey: ["traffic"], queryFn: api.traffic, refetchInterval: 2000 })
+export const useGitHubStatus = () => useQuery({ queryKey: ["github"], queryFn: api.githubStatus, refetchInterval: 30000 })
+export const useGitHubDisconnect = () => useInvalidatingMutation(() => api.githubDisconnect(), [["github"], ["system"]])
 export const useConfig = () => useQuery({ queryKey: ["config"], queryFn: api.config })
 
 function useInvalidatingMutation<TArgs, TResult>(fn: (args: TArgs) => Promise<TResult>, keys: string[][]) {

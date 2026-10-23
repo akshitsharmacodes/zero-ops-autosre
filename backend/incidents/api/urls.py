@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import demo_views, stream, views
+from . import demo_views, github_views, stream, views
 
 urlpatterns = [
     path("health", views.health, name="health"),
@@ -19,6 +19,10 @@ urlpatterns = [
     path("telemetry/connections", views.telemetry_current, name="telemetry-current"),
     path("telemetry/connections/history", views.telemetry_history, name="telemetry-history"),
     path("config", views.config_view, name="config"),
+    path("github/status", github_views.github_status, name="github-status"),
+    path("github/connect", github_views.github_connect, name="github-connect"),
+    path("github/callback", github_views.github_callback, name="github-callback"),
+    path("github/disconnect", github_views.github_disconnect, name="github-disconnect"),
     path("demo/trigger", demo_views.trigger, name="demo-trigger"),
     path("demo/traffic", demo_views.traffic_status, name="demo-traffic"),
     path("demo/replay", demo_views.replay, name="demo-replay"),

@@ -30,6 +30,16 @@ export const Dashboard: React.FC = () => {
   const guardrails = useGuardrails(selectedId, isActive(incident?.status)).data?.checks || []
   const timeline = useTimeline(selectedId, incident?.timeline)
 
+  // Coming back from GitHub's install page: ?github=connected | ?github=error&reason=...
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const result = params.get("github")
+    if (!result) return
+    if (result === "connected") toast.success("GitHub connected", { description: "AutoSRE can now open pull requests as its bot." })
+    else toast.error("GitHub connection failed", { description: params.get("reason") || undefined })
+    window.history.replaceState({}, "", window.location.pathname)
+  }, [])
+
   // Follow the newest incident unless the user picked one.
   useEffect(() => {
     const newest = incidents.data?.[0]?.id

@@ -38,15 +38,16 @@ class Workspace:
     # -- lifecycle ---------------------------------------------------------------------
     @classmethod
     def create(cls, source: str, base_branch: str, branch: str, parent_dir: str | Path | None = None,
-               git_env: dict | None = None) -> "Workspace":
+               git_env: dict | None = None, author: tuple[str, str] | None = None) -> "Workspace":
         parent = Path(parent_dir) if parent_dir else None
         if parent:
             parent.mkdir(parents=True, exist_ok=True)
         tmp = Path(tempfile.mkdtemp(prefix="ws-", dir=parent))
         root = tmp / "repo"
         git("clone", "--quiet", "--branch", base_branch, source, str(root), cwd=tmp, timeout=180, env=git_env)
-        git("config", "user.name", BOT_NAME, cwd=root)
-        git("config", "user.email", BOT_EMAIL, cwd=root)
+        name, email = author or (BOT_NAME, BOT_EMAIL)
+        git("config", "user.name", name, cwd=root)
+        git("config", "user.email", email, cwd=root)
         remote_branches = git("ls-remote", "--heads", "origin", branch, cwd=root, env=git_env).strip()
         if remote_branches:
             # The fix branch already exists (outer loop resuming): continue from it.

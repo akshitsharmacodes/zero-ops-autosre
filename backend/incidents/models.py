@@ -208,6 +208,11 @@ class RuntimeConfig(models.Model):
     llm_provider = models.CharField(max_length=32, default="groq")
     alert_threshold = models.FloatField(default=0.9)
     monitor_enabled = models.BooleanField(default=True)
+    # GitHub App connection (filled by the "Connect GitHub" install flow)
+    github_installation_id = models.BigIntegerField(null=True, blank=True)
+    github_account = models.CharField(max_length=128, blank=True, default="")
+    github_install_state = models.CharField(max_length=64, blank=True, default="")
+    github_install_state_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     @classmethod

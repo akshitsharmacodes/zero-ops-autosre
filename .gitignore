@@ -30,3 +30,7 @@ victim_service/.git
 var/
 .env
 *.tsbuildinfo
+
+# Secrets (GitHub App private key etc.)
+secrets/
+*.pem
