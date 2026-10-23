@@ -21,6 +21,13 @@ def start_background_services() -> None:
         _started = True
     _recover_interrupted_incidents()
 
+    from django.conf import settings
+
+    if settings.AUTOSRE["MONITOR_ENABLED"]:
+        from .monitor import start_monitor
+
+        start_monitor()
+
 
 def _recover_interrupted_incidents() -> None:
     """If the server stopped mid-incident, never leave it silently 'in progress' (NFR-R2)."""
