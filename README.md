@@ -1,354 +1,283 @@
-# AutoSRE � Team Zero-Ops
+# AutoSRE — Team Zero-Ops
 
-> **An autonomous on-call engineer** that detects a production database incident, stops the bleeding,
-> finds the root-cause commit, lets a coding agent write and **verify** a fix inside a sealed sandbox,
-> opens a pull request with a post-mortem, and keeps that PR healthy until it is **ready to merge**.
-> A human always presses Merge.
+### From production incident to verified fix — autonomously.
 
----
+AutoSRE is an AI-powered Site Reliability Engineering agent that detects database incidents, mitigates the immediate impact, investigates likely root causes, and uses a coding agent to develop and test a fix in a sandbox. It then opens a pull request and monitors it for failing CI or merge conflicts until it is ready for human review.
 
-## Table of Contents
+**The goal:** reduce the manual work between detecting an incident and delivering a verified, reviewable fix—without handing control of production merges to an AI agent.
 
-1. [Architecture Overview](#architecture-overview)
-2. [Incident Pipeline](#incident-pipeline)
-3. [Docker Composition](#docker-composition)
-4. [How to Run](#how-to-run)
-5. [Configuration](#configuration)
-6. [Guardrails](#guardrails)
-7. [API Reference](#api-reference)
-8. [Tests](#tests)
-9. [Repository Layout](#repository-layout)
+> **Human-in-the-loop by design:** AutoSRE can investigate, modify code in its workspace, run tests, and prepare a pull request. A human remains responsible for the final merge.
 
 ---
 
-## Architecture Overview
+## The problem
 
-`mermaid
-graph TB
-    subgraph Infrastructure[Docker - docker-compose.yml]
-        PG[PostgreSQL 16\nport 5432\nmax_connections=100]
-        VS[Victim Service\nDjango app\nport 8001\npool leak bug]
-        PG -- victim_app role --> VS
-    end
+Traditional incident response requires engineers to switch between monitoring tools, logs, database diagnostics, Git history, code editors, test runners, and pull requests.
 
-    subgraph Host[Host Process - python scripts/dev.py]
-        MON[Alert Monitor\npolls pg_stat_activity\nevery 2 s]
-        BE[AutoSRE Backend\nDjango 5 + DRF + uvicorn\nport 8000]
-        FE[Dashboard\nVite + React + TS\nport 5173]
-        BE -- reads --> MON
-    end
+AutoSRE brings these steps into one bounded workflow.
 
-    subgraph Agent[Coding Agent - agent/coding/]
-        LLM[LLM Client\nGroq / NVIDIA\ncached fallback]
-        TOOLS[ToolBox\nread, search, edit\nwrite, run_tests, finish]
-        GUARD[Guardrails\ninside tools\n+ injection screen]
-        SBX[Sandbox\nDocker isolated\nsubprocess labeled]
-        LLM --> TOOLS --> GUARD --> SBX
-    end
+| Traditional response | With AutoSRE |
+|---|---|
+| Investigate symptoms manually | Correlate telemetry, logs, and Git history |
+| Mitigate the incident manually | Attempt a targeted, guarded mitigation |
+| Reproduce and debug the issue | Use a coding agent with test feedback |
+| Validate the fix manually | Run regression and project test suites |
+| Create and maintain a PR manually | Prepare a PR and attempt bounded repair rounds |
+| Track the incident across tools | Inspect a unified incident timeline and audit trail |
 
-    PG -- pg_stat_activity\nautosre_agent role --> MON
-    VS -- logs to var/logs --> BE
-    MON -- alert threshold >= 90% --> BE
-    BE -- SSE stream --> FE
-    BE -- spawns --> Agent
-    Agent -- git push fix branch --> DEL[Delivery\nlocal bare repo\nor GitHub PR]
-`
+*AutoSRE assists with incident response; it does not guarantee that every incident can be diagnosed or automatically fixed.*
 
----
+## How it works
 
-## Incident Pipeline
+```mermaid
+flowchart TD
+    A["Production Alert"] --> B["Collect Telemetry & Logs"]
+    B --> C["Diagnose Incident"]
+    C --> D["Attempt Immediate Mitigation"]
+    D --> E["Correlate Likely Faulty Commit"]
+    E --> F["Coding Agent Investigates & Patches"]
+    F --> G["Sandbox Verification"]
+    G -->|Tests fail| F
+    G -->|Verified| H["Create Pull Request"]
+    H --> I["Monitor CI & Merge Conflicts"]
+    I -->|Repairable failure| F
+    I -->|Healthy| J["Ready for Human Review"]
+    I -->|Budget exhausted| K["Escalate With Evidence"]
+    J --> L["Human Reviews & Merges"]
+```
 
-`mermaid
-flowchart LR
-    A([Alert\nWebhook or Monitor]) --> B[Diagnose\npg_stat_activity\nlog parsing]
-    B --> C{Approval?\nreview mode}
-    C -- autonomous --> D[Mitigate\nterminate stuck\nDB sessions]
-    C -- review mode --> WAIT1([Human\nApproves])
-    WAIT1 --> D
-    D --> E[Correlate\ngit blame\ncommit scoring]
-    E --> F{Approval?\nreview mode}
-    F -- autonomous --> G[Coding Agent\nFix Loop]
-    F -- review mode --> WAIT2([Human\nApproves])
-    WAIT2 --> G
+### The two feedback loops
 
-    subgraph G[Coding Agent - Inner Loop]
-        direction TB
-        G1[Read / Search / Edit] --> G2[Run Tests\nin Sandbox]
-        G2 -- fail feeds back --> G1
-        G2 -- pass --> G3[Finish]
-    end
+**1. Fix loop**
 
-    G --> H[Deliver\nopen PR\npost-mortem]
-    H --> I[Watch PR\nOuter Loop]
+The coding agent reads relevant files, searches the codebase, edits permitted files, and runs tests. Failed checks provide feedback for another bounded attempt. The fix must satisfy the configured verification requirements before it can finish.
 
-    subgraph I[Outer Loop]
-        direction TB
-        I1{PR healthy?} -- conflict --> I2[Agent resolves\nmerge conflict]
-        I1 -- CI red --> I3[Agent fixes CI]
-        I2 --> I1
-        I3 --> I1
-        I1 -- green --> I4([READY TO MERGE])
-    end
+**2. Pull-request repair loop**
 
-    I4 --> MERGE([Human\nMerges PR])
-    B -- any failure --> ESC([ESCALATED\nevidence bundle])
-    G -- max 3 attempts --> ESC
-    I -- max 5 rounds --> ESC
-`
+After PR creation, AutoSRE can respond to merge conflicts and failing CI within its configured repair budget. If it cannot safely complete the workflow, it escalates the incident rather than continuing indefinitely.
 
 ---
 
-## Docker Composition
+## Key capabilities
 
-`mermaid
-graph LR
-    subgraph DC[docker-compose.yml]
-        direction TB
-        PG[postgres:16-alpine\nport 5432\nmax_connections=100\nsuperuser_reserved=1\nautosre_reserved=2\nVolume: postgres_data\nInit: infra/postgres/init.sql]
-        VS[victim_service Dockerfile\nport 8001\nDjango + psycopg2 pool\nvar/logs mounted to /app/logs\ndepends_on postgres healthy]
-        PG -- TCP 5432 --> VS
-    end
+- **Incident diagnosis:** inspect database telemetry and diagnostic evidence to understand the failure.
+- **Immediate mitigation:** attempt to reduce the impact of supported database incidents.
+- **Root-cause correlation:** rank likely faulty commits using diagnostic evidence and Git history.
+- **Tool-using coding agent:** investigate, search, edit, and test code through guarded tools.
+- **Sandbox verification:** check the regression test against the original code and run the project test suite against the patch.
+- **Pull-request automation:** prepare a fix and post-mortem, then monitor and attempt bounded PR repairs.
+- **Human-controlled delivery:** keep the final merge under human control.
+- **Auditable execution:** expose incident timelines, tool calls, diffs, sandbox runs, and audit information.
+- **Explicit execution modes:** distinguish live model behavior from cached decisions, replay, fallback, and non-isolated sandbox execution.
 
-    HOST[AutoSRE Backend\non host, port 8000]
-    HOST -- autosre_agent read-only role --> PG
-    HOST -- http://localhost:8001 --> VS
-    HOST -- reads logs --> LOGS[var/logs/\nvictim.log]
-    VS -- writes logs --> LOGS
-`
+## Safety and guardrails
 
-### Roles provisioned by infra/postgres/init.sql
+AutoSRE is designed around constrained autonomy rather than unrestricted code execution.
 
-| Role | Permissions | Used by |
-|---|---|---|
-| ictim_app | INSERT/SELECT on nalytics_* | victim_service container |
-| utosre_agent | SELECT on pg_stat_activity, pg_terminate_backend (guarded) | AutoSRE backend |
-| pg_admin | Superuser | Docker init only |
+| Guardrail | Intended enforcement |
+|---|---|
+| Restricted file changes | Limit edits to permitted suspect-commit files and new tests |
+| Change-size limit | Enforce the configured maximum of 50 changed source lines |
+| Secret protection | Scrub sensitive values before model calls and reject detected secrets in patches |
+| Risky-code checks | Inspect proposed additions for configured dangerous patterns |
+| Regression verification | Require the regression test to fail on the original code and the full suite to pass on the patch |
+| Bounded retries | Limit fix attempts and PR repair rounds |
+| Sandbox restrictions | Docker runner uses network restrictions, no host mounts, a non-root user, resource limits, and a timeout |
+| Human-controlled merge | Prevent the agent from merging directly into the protected main branch |
+| Escalation | Surface unresolved incidents with available evidence |
 
----
+**Important security limitation:** pattern-based guardrails are not a complete security boundary. Docker isolation applies to the configured Docker execution path. The subprocess fallback is **not isolated** and must not be treated as safe for untrusted code. Installation and image-build commands also require appropriate isolation and trust controls.
 
-## How to Run
+## Technology stack
 
-### Option A � One-command demo (recommended, Docker required)
+| Component | Technology |
+|---|---|
+| Backend and REST API | Python, Django 5, Django REST Framework |
+| Agent orchestration | LangGraph |
+| LLM providers | Groq or NVIDIA Nemotron |
+| Frontend | React, TypeScript, Vite |
+| Database | PostgreSQL 16 |
+| Sandbox | Docker |
+| Delivery integrations | Local provider and GitHub integration |
+| Incident updates | Server-Sent Events (SSE) |
 
-`ash
-# 1. Clone
-git clone https://github.com/akshitsharmacodes/Zero-Ops-AutoSRE.git
-cd Zero-Ops-AutoSRE
+### Project configuration
 
-# 2. Setup: creates .venv, .env, migrates DB, seeds victim history, builds containers
-python scripts/setup.py
+Projects can describe their build and test commands in `.autosre.yml`, with automatic detection for Python, Node.js, Go, and Java.
 
-# 3. Start everything (backend + frontend together)
-python scripts/dev.py
-`
-
-Open **http://127.0.0.1:5173** ? **Controls ? Start incident** and watch AutoSRE fix it.
-
----
-
-### Option B � Headless end-to-end (CI / judges)
-
-`ash
-python scripts/demo.py --conflict --merge
-`
-
-Runs the full story without a browser:
-1. Triggers the alert
-2. AutoSRE diagnoses + mitigates + correlates + fixes
-3. A simulated teammate pushes a conflicting commit
-4. AutoSRE resolves the conflict and re-tests
-5. Human merge is simulated (--merge)
+Database integration currently starts with PostgreSQL. Support for a language or project profile should not be interpreted as a guarantee that every framework, database, or incident type is automatically repairable.
 
 ---
 
-### Option C � Docker only (manual host)
-
-`ash
-# Start just the database + victim service
-docker compose up -d --build
-
-# Start the backend
-.venv/Scripts/python -m uvicorn autosre_api.asgi:application --app-dir backend --host 127.0.0.1 --port 8000
-
-# Start the frontend
-cd frontend && npm run dev -- --host 127.0.0.1 --port 5173
-`
-
----
+## Quick start
 
 ### Prerequisites
 
-| Tool | Version | Purpose |
-|---|---|---|
-| Python | >= 3.11 | backend + scripts |
-| Node.js | >= 18 | Vite dashboard |
-| Git | >= 2.38 | victim repo seeding + agent workspace |
-| Docker Desktop | latest | PostgreSQL + victim service + isolated sandbox |
+- Python 3.11+
+- Git 2.38+
+- Node.js 18+
+- Docker Desktop, running
 
-> **Without Docker:** the system still works fully. Sandbox runs are labeled NOT ISOLATED on the dashboard and post-mortem. setup.py detects Docker's absence automatically.
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/shv-codes/zero-ops-autosre.git
+cd zero-ops-autosre
+```
+
+### 2. Set up the project
+
+```bash
+python scripts/setup.py
+```
+
+The setup script prepares the Python environment, dependencies, environment configuration, database migrations, demo repository, frontend dependencies, Docker services, and sandbox image.
+
+### 3. Start the application
+
+```bash
+python scripts/dev.py
+```
+
+Open **http://127.0.0.1:5173** in your browser.
+
+Navigate to **Controls → Start incident** to trigger the demo workflow.
+
+### 4. Run the headless demo
+
+```bash
+python scripts/demo.py --conflict --merge
+```
+
+This scenario exercises the incident workflow, including pull-request repair and a simulated teammate conflict.
+
+**Docker note:** the application may start without Docker, but the subprocess sandbox fallback is not isolated. Use the Docker-backed sandbox for isolated test execution, and do not use the fallback to run untrusted code.
 
 ---
 
-### Victim Service (standalone)
+## Live mode: real LLM and GitHub integration
 
-The demo patient (ictim_service/) is a self-contained Django app with a **real connection-pool leak** in nalytics/views.py::user_activity_report. It can be run independently:
+The default local demo and live integration mode serve different purposes.
 
-`ash
-cd victim_service
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py seed_activity
-python manage.py runserver 8001
-`
+For live model execution, configure your `.env`:
 
----
-
-## Configuration
-
-Copy .env.example to .env. Key settings:
-
-`ini
-# Mode
-AUTOSRE_MODE=cached       # cached (no API key) | live (real LLM) | replay
-SANDBOX_ENGINE=cached     # cached | auto | docker | subprocess
-
-# LLM (live mode only)
+```dotenv
+AUTOSRE_MODE=live
 LLM_PROVIDER=groq
-GROQ_API_KEY=gsk_...
-GROQ_FALLBACK_MODELS=openai/gpt-oss-20b,qwen/qwen3.8-27b
+GROQ_API_KEY=your_groq_api_key
+```
 
-# Delivery
-DELIVERY_PROVIDER=local   # local (offline) | github (real PR)
+For NVIDIA, configure the corresponding provider and `NVIDIA_API_KEY` instead.
+
+To enable real GitHub pull requests, configure the GitHub delivery provider and credentials:
+
+```dotenv
+DELIVERY_PROVIDER=github
 GITHUB_REPO=your-user/victim-service
-GITHUB_APP_ID=123456
+GITHUB_APP_ID=your_github_app_id
 GITHUB_APP_PRIVATE_KEY_PATH=secrets/github-app.pem
+TARGET_REPO_PATH=var/victim_repo_github
+```
 
-# Monitored DB
-TARGET_DB_HOST=localhost
-TARGET_DB_PORT=5432
-TARGET_DB_NAME=victim_db
-TARGET_DB_USER=autosre_agent
-TARGET_DB_PASSWORD=autosre_agent_pw
-`
+Then use **Controls → Connect GitHub**.
 
----
+Follow the complete setup guide: [`docs/GITHUB_APP_SETUP.md`](docs/GITHUB_APP_SETUP.md).
 
-## Guardrails
-
-`mermaid
-flowchart TB
-    INPUT[Untrusted input\nlogs, SQL text, commit msgs\nfile content, test output] --> FENCE[Step 1 - Fence as DATA\nwrapped in untrusted_data blocks\nsystem prompt: data is never instructions]
-    FENCE --> SCREEN
-
-    subgraph SCREEN[Step 2 - Injection Screen]
-        H[HeuristicInjectionDetector - offline\n7 rule patterns:\n- override instructions\n- role hijack\n- fake chat markup\n- tool steering\n- secret exfiltration\n- hidden Unicode tricks]
-        PG2[PromptGuardDetector\nMeta Llama Prompt Guard 2\nvia Groq API]
-        H --> NEU[Neutralize\nreplace suspicious segment with notice\naudit logged]
-        PG2 --> NEU
-    end
-
-    SCREEN --> TOOLS
-
-    subgraph TOOLS[Step 3 - Tool Guardrails - enforced inside every tool call]
-        R1[PathNotAllowed - no path traversal]
-        R2[File allowlist - only suspect commit files + tests]
-        R3[50 changed source lines maximum]
-        R4[No dangerous patterns: os.system, subprocess, eval, DROP, DELETE FROM]
-        R5[No secrets - scrubbed before LLM]
-        R6[Code parses, no conflict markers]
-        R7[Regression test must fail on old code, suite must pass on new code]
-        R8[Never push to main, never merge]
-    end
-
-    TOOLS --> SAFE[Safe output to LLM / sandbox]
-    TOOLS -- violation --> REFUSE[Refused + reason shown to model]
-`
+Keep credentials out of source control. Use the local demo to validate the workflow before enabling live integrations. If the configured LLM is unavailable, AutoSRE may fall back to recorded decisions; such runs should not be presented as successful live-LLM demonstrations.
 
 ---
 
-## API Reference
+## API overview
 
-Base URL: http://127.0.0.1:8000/api/v1 � Envelope: { data, error, meta }
+The API is exposed under `/api/v1`.
 
-| Method | Path | Description |
-|---|---|---|
-| GET | /health | Liveness check |
-| GET | /system | Mode, LLM, delivery, sandbox, DB, monitor status |
-| GET/PATCH | /config | Runtime config (mode, LLM provider, thresholds) |
-| POST | /alerts | Ingest an alert (deduplicates open incidents) |
-| GET | /incidents | List all incidents |
-| GET | /incidents/{id} | Full incident detail + timeline |
-| DELETE | /incidents/{id} | Remove incident + full audit trail |
-| GET | /incidents/{id}/stream | Live SSE timeline (resumable) |
-| GET | /incidents/{id}/diff | Agent unified diff |
-| GET | /incidents/{id}/postmortem | Rendered post-mortem |
-| GET | /incidents/{id}/steps | Agent tool calls |
-| GET | /incidents/{id}/sandbox-runs | Sandbox execution records |
-| GET | /incidents/{id}/audit | Full audit JSON export |
-| POST | /incidents/{id}/stop | Force-stop running agent, status becomes ESCALATED |
-| POST | /incidents/{id}/decision | Approve/Deny (review mode) |
-| POST | /incidents/{id}/merge | Human merge (local provider) |
-| GET | /guardrails?incident_id= | Guardrail checklist |
-| GET | /telemetry/connections | Live DB connection counts |
-| GET | /telemetry/connections/history | Historical connection samples |
-| POST | /demo/trigger | Start background traffic to victim |
-| POST | /demo/prototype | One-click: reset repo + trigger incident |
-| POST | /demo/replay | Replay a recorded incident |
-| POST | /demo/teammate-push | Simulate a conflicting commit |
-| POST | /demo/reset | Wipe incidents + optionally reseed repo |
-| GET/POST | /github/status, /github/connect, /github/callback, /github/disconnect | GitHub App OAuth flow |
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Health check |
+| `GET /system` | Configuration and dependency status |
+| `POST /alerts` | Receive incident alerts |
+| `GET /incidents` | List incidents |
+| `GET /incidents/{id}` | Retrieve incident details and timeline |
+| `GET /incidents/{id}/stream` | Stream incident updates using SSE |
+| `GET /incidents/{id}/diff` | Inspect the proposed code changes |
+| `GET /incidents/{id}/postmortem` | Retrieve the incident post-mortem |
+| `GET /incidents/{id}/steps` | Inspect agent execution steps |
+| `GET /incidents/{id}/sandbox-runs` | Inspect sandbox runs |
+| `GET /incidents/{id}/audit` | Download the audit trail |
+| `GET /guardrails` | Inspect guardrail status |
+| `GET /telemetry/connections` | Inspect database connection telemetry |
+| `GET /config` | Read runtime configuration |
+| `GET /github/status` | Check GitHub integration status |
+
+Additional configuration, GitHub connection, incident merge, and demo-control endpoints are available in the implementation.
 
 ---
 
-## Tests
+## Running tests
 
-`ash
-# Backend (SRS TC-1 through TC-14 + reliability + token budget)
-.venv/Scripts/python -m pytest backend          # Windows
-.venv/bin/python -m pytest backend              # macOS / Linux
+Run the backend tests:
 
-# Victim service
-.venv/Scripts/python -m pytest victim_service
-`
+```bash
+.venv/bin/python -m pytest backend
+```
 
-> PostgreSQL and Docker integration tests auto-skip when the containers are not running.
+Run the victim-service tests:
 
----
+```bash
+.venv/bin/python -m pytest victim_service
+```
 
-## Repository Layout
+On Windows, use `.venv\Scripts\python.exe` instead.
 
-`
-Zero-Ops-AutoSRE/
-+-- backend/
-�   +-- agent/
-�   �   +-- pipeline.py          LangGraph state machine (full incident workflow)
-�   �   +-- coding/              LLM client, tool loop, recordings, prompts
-�   +-- incidents/               Models, REST API, SSE, monitor, runner, wiring
-�   +-- telemetry/               PostgreSQL adapter (pg_stat_activity)
-�   +-- diagnostics/             Log parser, diagnosis, stop-the-bleeding
-�   +-- correlation/             Commit scoring + git blame
-�   +-- guardrails/              Injection screen + rule engine (inside tools)
-�   +-- sandbox/                 Docker sandbox + subprocess fallback
-�   +-- delivery/                Local bare repo + GitHub PR provider, post-mortem
-�   +-- workspace/               Temp clone, branch, diff helpers
-�   +-- project/                 .autosre.yml loader + stack auto-detection
-�   +-- demo/                    Traffic driver, teammate conflict simulation
-+-- victim_service/              Demo target: Django app with real pool-leak bug
-�   +-- analytics/               Models, views (the leaky endpoint), pool
-�   +-- tests/                   Health, metrics, report tests
-�   +-- .autosre.yml             Tells AutoSRE how to build and test this project
-+-- frontend/                    Vite + React + TypeScript live dashboard
-+-- infra/postgres/              Least-privilege SQL roles init script
-+-- scripts/
-�   +-- setup.py                 One-command environment bootstrap
-�   +-- dev.py                   Start backend + frontend together
-�   +-- demo.py                  Headless end-to-end demo runner
-�   +-- seed_victim_repo.py      Build the deterministic victim git history
-+-- docs/
-�   +-- HOW_IT_WORKS.md          Plain-language guide (no code)
-�   +-- DEPLOY.md                Render + Vercel one-click deploy guide
-�   +-- GITHUB_APP_SETUP.md      Step-by-step GitHub App setup
-+-- docker-compose.yml           PostgreSQL 16 + victim_service
-+-- render.yaml                  Render Blueprint (hosted backend)
-+-- .env.example                 All config knobs documented
-`
+Docker and PostgreSQL integration tests may be skipped when their required services are unavailable. For a meaningful verification run, start the required services and inspect the test output rather than treating skipped tests as passing integration tests.
+
+## Repository structure
+
+```text
+zero-ops-autosre/
+├── backend/
+│   ├── agent/          # Workflow orchestration and coding agent
+│   ├── correlation/    # Commit scoring and Git blame
+│   ├── diagnostics/    # Diagnosis and mitigation
+│   ├── delivery/       # Local and GitHub delivery
+│   ├── guardrails/     # Safety and patch checks
+│   ├── incidents/      # Incident lifecycle and API
+│   ├── sandbox/        # Docker runner and fallback
+│   ├── telemetry/      # Database adapters
+│   └── workspace/      # Repository and branch operations
+├── frontend/           # React + TypeScript dashboard
+├── victim_service/     # Demo application and test cases
+├── infra/postgres/     # PostgreSQL roles and configuration
+├── docs/
+│   ├── HOW_IT_WORKS.md
+│   ├── IMPLEMENTATION_PLAN.md
+│   └── GITHUB_APP_SETUP.md
+├── scripts/            # Setup, development, and demo scripts
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+## Documentation
+
+- [How AutoSRE works](docs/HOW_IT_WORKS.md)
+- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
+- [GitHub App setup](docs/GITHUB_APP_SETUP.md)
+
+## Current scope and limitations
+
+AutoSRE is a hackathon-stage engineering project. Its reliability and security depend on the configured execution environment, project profile, telemetry, LLM provider, permissions, and test quality.
+
+- Automated remediation is limited to incidents and projects the system can diagnose and operate on.
+- Commit correlation identifies likely causes; it does not prove causation.
+- Passing tests provide evidence of correctness, not a guarantee of defect-free code.
+- Regex and pattern-based guardrails cannot identify every dangerous change.
+- Non-Docker sandbox execution is not isolated.
+- Live LLM behavior, recorded replay, and fallback execution must be evaluated separately.
+- Unresolved or unsafe cases should be escalated for human investigation.
+
+## Vision
+
+**Move incident response from alert to verified, reviewable change—with bounded autonomy, explicit evidence, and a human in control.**
+
+Built by **Team Zero-Ops** for the CU Hackathon.
