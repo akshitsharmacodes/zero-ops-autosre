@@ -11,6 +11,7 @@ be unit-tested on its own with fake dependencies (NFR-M3). Any failure routes to
 from __future__ import annotations
 
 import logging
+import re
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ from .memory import IncidentMemory, NoMemory, incident_signature
 from .coding.briefing import CodeBriefing
 from .coding.llm import ChatClient
 from .coding.prompts import TaskBrief, ci_brief, conflict_brief, fix_brief, system_prompt
+from .coding.loop import ForceStopped
 from .coding.recordings import recording_for_conflict, recording_for_fix
 from .coding.session import run_coding_task
 from .coding.tools import ToolBox
@@ -102,6 +104,8 @@ class AgentDeps:
     # Review mode asks a human before impactful steps; autonomous approves immediately (still recorded)
     approvals: ApprovalGate = field(default_factory=AutoApproval)
     memory: IncidentMemory = field(default_factory=NoMemory)
+    # Set by the runner when a person hits Force stop. Checked between steps.
+    should_stop: Callable[[], bool] = field(default_factory=lambda: (lambda: False))
     ctx: dict = field(default_factory=dict)  # runtime objects (workspace, policy) shared between nodes
 
 
@@ -177,7 +181,7 @@ def node_correlate(state: PipelineState, deps: AgentDeps) -> dict:
         raise Escalate(f"could not identify the change that caused this: {exc}") from exc
     rec.update(suspect=suspect)
     c, loc = suspect["commit"], suspect["location"]
-    rec.event("CORR", f"Suspect commit {c['short_sha']} by {c['author']}: \"{c['message']}\" "
+    rec.event("CORR", f"Suspect commit \"{c['message']}\" by {c['author']} "
                       f"(confidence {suspect['confidence']}).")
     if loc.get("start_line"):
         rec.event("CORR", f"Leaking code: {loc['file']} lines {loc['start_line']}-{loc['end_line']}"
@@ -196,13 +200,26 @@ def node_correlate(state: PipelineState, deps: AgentDeps) -> dict:
     return {"suspect": suspect, "related": related}
 
 
+def _fix_branch_name(function: str, origin: str) -> str:
+    """A readable branch, e.g. autosre/fix-user-activity-report. Never the incident id."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (function or "connection-leak").lower()).strip("-") or "connection-leak"
+    base = f"autosre/fix-{slug}"
+    if not Path(origin).joinpath("HEAD").exists():
+        return base
+    name, n = base, 2
+    while git("rev-parse", "--verify", "--quiet", f"refs/heads/{name}", cwd=origin, check=False).strip():
+        name = f"{base}-{n}"
+        n += 1
+    return name
+
+
 def node_fix(state: PipelineState, deps: AgentDeps) -> dict:
     rec, cfg = deps.recorder, deps.config
     rec.set_status("PATCHING")
     suspect = state["suspect"]
-    branch = f"autosre/fix-{state['incident_id'].lower()}"
     try:
         source, env = deps.provider.clone_source()
+        branch = _fix_branch_name((suspect.get("location") or {}).get("function") or "", source)
         ws = Workspace.create(source, cfg.base_branch, branch, parent_dir=cfg.work_dir, git_env=env,
                               author=deps.provider.commit_identity())
     except (GitError, DeliveryError) as exc:
@@ -241,10 +258,16 @@ def node_fix(state: PipelineState, deps: AgentDeps) -> dict:
         return ToolBox(ws, profile, policy, deps.sandbox, rec, "fix", cfg.max_attempts, True,
                        on_attempt=lambda n: rec.update(attempt=n))
 
+    try:  # recorded edits are derived from the code as actually checked out
+        suspect_source = ws.read_file(suspect.get("location", {}).get("file") or suspect["primary_file"])
+    except (FileNotFoundError, ValueError):
+        suspect_source = None
     result, brain = run_coding_task(
-        mode=deps.mode, live_client_factory=deps.live_client_factory, recording=recording_for_fix(suspect),
+        mode=deps.mode, live_client_factory=deps.live_client_factory,
+        recording=recording_for_fix(suspect, suspect_source),
         make_toolbox=make_toolbox, restart=ws.reset_hard, recorder=rec,
         system_prompt=system_prompt(profile, policy, cfg.max_attempts), task_prompt=task, max_steps=cfg.max_steps,
+        should_stop=deps.should_stop,
     )
     rec.update(llm=brain.as_dict())
     if not result.success:
@@ -340,7 +363,7 @@ def _note_new_commit(state: PipelineState, deps: AgentDeps, status: PRStatus) ->
     where = ", ".join(files) if files else ("yes" if status.conflicts else "none")
     deps.recorder.event(
         "LOOP",
-        f"New commit {review['short_sha']} by {review['author']}: {review['message']}. Merge conflicts: {where}.",
+        f"New commit \"{review['message']}\" by {review['author']} on {status.base_branch}. Merge conflicts: {where}.",
     )
 
 
@@ -373,17 +396,17 @@ def _maybe_demo_push(deps: AgentDeps) -> bool:
     cfg = deps.config
     if not cfg.demo_conflict_after_ready or deps.ctx.get("demo_conflict_pushed"):
         return False
-    from demo.teammate import push_teammate_change
+    from demo.teammate import MESSAGE as teammate_message, push_teammate_change
 
     deps.ctx["demo_conflict_pushed"] = True
     try:
-        sha = push_teammate_change(deps.provider)
+        push_teammate_change(deps.provider)
     except DeliveryError as exc:
         deps.recorder.event("LOOP", f"Teammate push skipped: {exc}")
         return False
     deps.recorder.event(
         "LOOP",
-        f"A teammate pushed {sha[:7]} to {cfg.base_branch} (top 100 users). Watching for merge conflicts.",
+        f"A teammate pushed \"{teammate_message}\" to {cfg.base_branch}. Watching for merge conflicts.",
     )
     return True
 
@@ -398,6 +421,8 @@ def node_watch_pr(state: PipelineState, deps: AgentDeps) -> dict:
                       f"(max {cfg.pr_max_rounds} repair rounds).")
 
     while time.monotonic() < deadline:
+        if deps.should_stop():
+            raise Escalate("Force-stopped.")
         try:
             status = provider.get_pr(number)
             errors = 0
@@ -515,14 +540,15 @@ def _repair(state: PipelineState, deps: AgentDeps, status: PRStatus, task: str, 
             mode=deps.mode, live_client_factory=deps.live_client_factory, recording=recording,
             make_toolbox=make_toolbox, restart=restart, recorder=rec,
             system_prompt=system_prompt(profile, policy, cfg.max_attempts), task_prompt=prompt,
-            max_steps=cfg.max_steps,
+            max_steps=cfg.max_steps, should_stop=deps.should_stop,
         )
         if not result.success:
             raise Escalate(f"could not {task.replace('_', ' ')} on PR #{status.number} ({result.reason})")
+        subject = result.summary.split(". ")[0][:72].rstrip(".")
         if ws.merging():
-            ws.complete_merge()
+            ws.complete_merge(f"merge: {subject}\n\n{result.summary}")
         else:
-            ws.commit_all(f"fix: {task.replace('_', ' ')} for {state['incident_id']}\n\n{result.summary}")
+            ws.commit_all(f"fix: {subject}\n\n{result.summary}")
         deps.provider.push(ws)
         diff = ws.diff(f"origin/{cfg.base_branch}")
         rec.update(unified_diff=diff)
@@ -559,6 +585,8 @@ def _ask(deps: AgentDeps, req: ApprovalRequest):
     if deps.approvals.mode == "review":
         rec.event("ALERT", f"Waiting for human approval: {req.title}")
     decision = deps.approvals.request(req)
+    if deps.should_stop():
+        raise Escalate("Force-stopped.")
     deps.ctx.setdefault("approvals", []).append(
         {"gate": req.gate, "approved": decision.approved, "by": decision.by, "mode": deps.approvals.mode})
     rec.audit("approval", {"gate": req.gate, "title": req.title, "details": req.details, "mode": deps.approvals.mode,
@@ -695,8 +723,12 @@ def build_graph(deps: AgentDeps):
 
     def wrap(name, fn):
         def run(state: PipelineState) -> dict:
+            if deps.should_stop():
+                return {"error": "Force-stopped."}
             try:
                 return fn(state, deps) or {}
+            except ForceStopped:
+                return {"error": "Force-stopped."}
             except Escalate as exc:
                 return {"error": str(exc)}
             except Exception as exc:  # NFR-R2: never crash silently

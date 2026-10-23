@@ -16,6 +16,7 @@ urlpatterns = [
     path("incidents/<str:incident_id>/audit", views.export_audit, name="incident-audit"),
     path("incidents/<str:incident_id>/merge", demo_views.human_merge, name="incident-merge"),
     path("incidents/<str:incident_id>/decision", views.decide, name="incident-decision"),
+    path("incidents/<str:incident_id>/stop", views.force_stop, name="incident-stop"),
     path("guardrails", views.get_guardrails, name="guardrails"),
     path("telemetry/connections", views.telemetry_current, name="telemetry-current"),
     path("telemetry/connections/history", views.telemetry_history, name="telemetry-history"),

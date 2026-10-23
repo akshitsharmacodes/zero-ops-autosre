@@ -30,6 +30,11 @@ class DeliveryError(Exception):
     pass
 
 
+def _push_rejected(exc: GitError) -> bool:
+    text = str(exc)
+    return "[rejected]" in text or "non-fast-forward" in text or "fetch first" in text
+
+
 @dataclass
 class PRStatus:
     number: int
@@ -170,12 +175,93 @@ class LocalProvider(DeliveryProvider):
         env = {"GIT_AUTHOR_NAME": merged_by, "GIT_AUTHOR_EMAIL": "reviewer@zero-ops.dev",
                "GIT_COMMITTER_NAME": merged_by, "GIT_COMMITTER_EMAIL": "reviewer@zero-ops.dev"}
         commit = git("commit-tree", tree, "-p", base_sha, "-p", head_sha, "-m",
-                     f"Merge pull request #{number} from {data['head']}\n\n{data['title']}",
+                     f"Merge branch '{data['head']}' into {data['base']}\n\n{data['title']}",
                      cwd=self.origin, env=env).strip()
         git("update-ref", f"refs/heads/{data['base']}", commit, base_sha, cwd=self.origin)
         data["state"], data["merged_by"] = "merged", merged_by
         self._save(data)
         return commit
+
+    def github_repo(self) -> str:
+        try:
+            from django.conf import settings
+            if not settings.configured:
+                return ""
+            return (settings.DELIVERY.get("GITHUB_REPO") or "").strip()
+        except Exception:
+            return ""
+
+    def _mirror_url(self) -> str:
+        repo = self.github_repo()
+        return f"https://github.com/{repo}.git" if repo else ""
+
+    def _push_branch(self, url: str, branch: str) -> None:
+        """Push `branch` from the local origin.
+
+        A repeated demo reuses the same autosre/* name, so GitHub often already has
+        that branch with different commits. Fetch, then replace only that branch.
+        Any other branch is left untouched when it is not a fast-forward.
+        """
+        local_ref = f"refs/heads/{branch}"
+        refspec = f"{local_ref}:refs/heads/{branch}"
+        try:
+            git("push", url, refspec, cwd=self.origin, timeout=180)
+            return
+        except GitError as exc:
+            if not branch.startswith("autosre/") or not _push_rejected(exc):
+                raise
+            mirror = f"refs/autosre-mirror/heads/{branch}"
+            git("fetch", url, f"+refs/heads/{branch}:{mirror}", cwd=self.origin, timeout=180)
+            expected = self._rev(mirror)
+            if expected == self._rev(local_ref):
+                return
+            git("push", f"--force-with-lease=refs/heads/{branch}:{expected}", url,
+                f"+{local_ref}:refs/heads/{branch}", cwd=self.origin, timeout=180)
+
+    def publish_merge(self, head: str, base: str) -> dict:
+        """Push the named fix branch, then move GitHub's base branch to this merge.
+
+        A reseeded local history is not a fast-forward of GitHub. In that case the
+        push is a merge commit whose first parent is GitHub's current base and whose
+        tree is the locally merged branch. GitHub's branch moves forward; it is not rewritten.
+        The fix branch itself is an autosre/* branch, so a previous run's history on
+        that name is replaced after a fetch.
+        """
+        repo = self.github_repo()
+        url = self._mirror_url()
+        if not repo or not url:
+            return {"mirrored": False, "head": head, "base": base}
+        self._push_branch(url, head)
+        local_sha = self._rev(base)
+        try:
+            git("fetch", url, f"+{base}:refs/autosre-mirror/{base}", cwd=self.origin, timeout=180)
+        except GitError:
+            git("push", url, f"{local_sha}:refs/heads/{base}", cwd=self.origin, timeout=180)
+            return {"mirrored": True, "repo": repo, "head": head, "base": base,
+                    "url": f"https://github.com/{repo}/tree/{head}"}
+        remote_sha = self._rev(f"refs/autosre-mirror/{base}")
+        if remote_sha == local_sha:
+            return {"mirrored": True, "repo": repo, "head": head, "base": base,
+                    "url": f"https://github.com/{repo}/tree/{head}"}
+        ancestor = git("merge-base", remote_sha, local_sha, cwd=self.origin, check=False).strip()
+        if ancestor == remote_sha:
+            git("push", url, f"{local_sha}:refs/heads/{base}", cwd=self.origin, timeout=180)
+        else:
+            message = f"Merge branch '{head}' into {base}"
+            try:
+                title = git("log", "-1", "--format=%s", head, cwd=self.origin).strip()
+            except GitError:
+                title = ""
+            if title and "fix-inc-" not in title:
+                message = f"{message}\n\n{title}"
+            tree = git("rev-parse", f"{local_sha}^{{tree}}", cwd=self.origin).strip()
+            env = {"GIT_AUTHOR_NAME": "human reviewer", "GIT_AUTHOR_EMAIL": "reviewer@zero-ops.dev",
+                   "GIT_COMMITTER_NAME": "human reviewer", "GIT_COMMITTER_EMAIL": "reviewer@zero-ops.dev"}
+            merged = git("commit-tree", tree, "-p", remote_sha, "-p", local_sha, "-m", message,
+                         cwd=self.origin, env=env).strip()
+            git("push", url, f"{merged}:refs/heads/{base}", cwd=self.origin, timeout=180)
+        return {"mirrored": True, "repo": repo, "head": head, "base": base,
+                "url": f"https://github.com/{repo}/tree/{head}"}
 
     def _rev(self, ref: str) -> str:
         return git("rev-parse", ref, cwd=self.origin).strip()

@@ -24,7 +24,7 @@ def configured(settings, seeded_repo, tmp_path, monkeypatch):
     settings.VAR_DIR = tmp_path / "var"
     settings.TARGET_APP = {**settings.TARGET_APP, "LOG_PATH": str(log)}
     settings.TARGET_REPO = {**settings.TARGET_REPO, "PATH": str(clone)}
-    settings.DELIVERY = {**settings.DELIVERY, "PROVIDER": "local", "LOCAL_ORIGIN": str(origin)}
+    settings.DELIVERY = {**settings.DELIVERY, "PROVIDER": "local", "LOCAL_ORIGIN": str(origin), "GITHUB_REPO": ""}
     settings.SANDBOX = {**settings.SANDBOX, "ENGINE": "subprocess", "WORK_DIR": str(tmp_path / "sbx")}
     settings.AUTOSRE = {**settings.AUTOSRE, "PR_POLL_SECONDS": 0.05, "PR_WATCH_TIMEOUT_SECONDS": 1}
     adapter = FakeAdapter(leaked=88)
@@ -180,6 +180,28 @@ def test_prototype_repairs_the_teammate_commit(configured, settings, monkeypatch
     assert "with report_pool.connection() as conn:" in views and "LIMIT 100" in views
     assert "<<<<<<<" not in views
     assert "cached checks" in incident.postmortem
+
+
+def test_force_stop_and_delete_one_incident(configured):
+    incident, created = ingest_alert({"source": "pg-monitor", "metric": "pg_connections", "value": 98, "max": 100},
+                                     start=False)
+    assert created
+    c = Client()
+    stopped = body(c.post(f"/api/v1/incidents/{incident.id}/stop"))
+    assert stopped == {"stopped": True, "id": incident.id}
+    incident.refresh_from_db()
+    assert incident.status == "ESCALATED" and incident.escalation_reason == "Force-stopped."
+
+    from incidents.recorder import DjangoRecorder
+    DjangoRecorder(incident.id).set_status("PATCHING")
+    incident.refresh_from_db()
+    assert incident.status == "ESCALATED"
+
+    deleted = body(c.delete(f"/api/v1/incidents/{incident.id}"))
+    assert deleted == {"deleted": True, "id": incident.id}
+    assert c.get(f"/api/v1/incidents/{incident.id}").status_code == 404
+    assert c.post(f"/api/v1/incidents/{incident.id}/stop").status_code == 404
+    assert c.delete(f"/api/v1/incidents/{incident.id}").status_code == 404
 
 
 def test_replay_reproduces_recorded_run(finished_incident, tmp_path, monkeypatch):

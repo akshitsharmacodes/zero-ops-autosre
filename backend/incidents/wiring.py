@@ -21,6 +21,7 @@ from .models import Incident, RunMode, RuntimeConfig, TelemetrySample
 from .approvals import DjangoApprovalGate
 from .memory import DjangoIncidentMemory
 from .recorder import DjangoRecorder
+from .runner import stop_requested
 
 logger = logging.getLogger("autosre.wiring")
 
@@ -119,6 +120,7 @@ def run_incident(incident_id: str) -> None:
         approvals=DjangoApprovalGate(incident_id, recorder, settings.AUTOSRE["APPROVAL_TIMEOUT_SECONDS"])
         if incident.approval_mode == "review" else AutoApproval(),
         memory=DjangoIncidentMemory(),
+        should_stop=lambda: stop_requested(incident_id),
         sleep=time.sleep,
     )
     run_pipeline(incident_id, incident.alert, deps)

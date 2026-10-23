@@ -64,6 +64,8 @@ export const useDecide = () =>
     [["incident"], ["incidents"]],
   )
 export const useMerge = () => useInvalidatingMutation((id: string) => api.merge(id), [["incidents"], ["incident"]])
+export const useForceStop = () => useInvalidatingMutation((id: string) => api.forceStop(id), [["incidents"], ["incident"]])
+export const useDeleteIncident = () => useInvalidatingMutation((id: string) => api.deleteIncident(id), [["incidents"], ["incident"]])
 export const useReset = () =>
   useInvalidatingMutation(
     (opts: { clear_incidents?: boolean; reseed_repo?: boolean }) => api.reset(opts),

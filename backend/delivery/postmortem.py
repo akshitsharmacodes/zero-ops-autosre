@@ -92,7 +92,7 @@ def render_postmortem(*, incident_id: str, alert: dict, diagnosis: dict, mitigat
     lines += ["", "### Root cause"]
     if commit:
         lines += [
-            f"Commit `{commit.get('short_sha')}` by {commit.get('author')} — *{commit.get('message')}* "
+            f"Commit *{commit.get('message')}* by {commit.get('author')} "
             f"(correlation confidence **{suspect.get('confidence')}**).",
             "",
             f"`{loc.get('file')}` lines {loc.get('start_line')}–{loc.get('end_line')}"

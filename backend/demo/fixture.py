@@ -68,6 +68,66 @@ class FixtureAdapter(DatabaseAdapter):
         return done
 
 
+def _seed_module():
+    import sys
+
+    from django.conf import settings
+
+    scripts = str(settings.REPO_ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.append(scripts)  # appended, so scripts/demo.py never shadows backend/demo
+    import seed_victim_repo
+
+    return seed_victim_repo
+
+
+def history_problems(origin: Path, base_branch: str) -> list[str]:
+    """Ways the local demo repo differs from the freshly seeded history ([] = pristine).
+
+    Every prototype run leaves traces: a fix branch, a teammate commit on main, sometimes a
+    merged fix. The recorded agent decisions expect Charlie's original leak, so the next
+    play must start from exactly the seeded state.
+    """
+    from workspace.gitcmd import GitError, git
+
+    seed = _seed_module()
+    if not (origin / "HEAD").exists():
+        return ["origin repo missing"]
+    try:
+        subjects = git("log", "--format=%s", base_branch, cwd=origin).splitlines()
+        branches = git("for-each-ref", "--format=%(refname:short)", "refs/heads", cwd=origin).split()
+        views = git("show", f"{base_branch}:analytics/views.py", cwd=origin)
+    except GitError as exc:
+        return [f"unreadable: {exc}"]
+    problems = []
+    expected = [c[2] for c in reversed(seed.COMMITS)]
+    if subjects != expected:
+        problems.append(f"{base_branch} has {len(subjects)} commit(s), expected the {len(expected)} seeded ones")
+    extra = [b for b in branches if b != base_branch]
+    if extra:
+        problems.append(f"leftover branches: {', '.join(extra)}")
+    if views.replace("\r\n", "\n") != seed.views_for_stage(4):
+        problems.append("analytics/views.py differs from Charlie's original leak")
+    return problems
+
+
+def ensure_pristine_history() -> list[str]:
+    """Re-seed the local demo repo unless it is exactly the seeded history.
+    Returns the problems that were fixed ([] when nothing needed doing)."""
+    from django.conf import settings
+
+    if settings.DELIVERY["PROVIDER"] != "local":
+        return []
+    problems = history_problems(Path(settings.DELIVERY["LOCAL_ORIGIN"]), settings.TARGET_REPO["BASE_BRANCH"])
+    if problems:
+        _seed_module().seed(Path(settings.VAR_DIR), force=True)
+    return problems
+
+
+# Backwards-compatible name used elsewhere.
+ensure_leaky_history = ensure_pristine_history
+
+
 def prototype_log_path() -> Path:
     from django.conf import settings
 
