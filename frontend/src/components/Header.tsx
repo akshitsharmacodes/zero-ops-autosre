@@ -1,4 +1,4 @@
-import React from "react"
+import React, { useEffect, useState } from "react"
 import { AlertTriangle, Bot, Box, Database, GitPullRequest, Shield, Sliders } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -32,14 +32,31 @@ export const Header: React.FC<HeaderProps> = ({ system, backendError, incident, 
   else if (system?.mode === "cached") banners.push("CACHED mode: the agent replays recorded decisions; files, guardrails and sandbox still run for real.")
   if (system && !system.sandbox.isolated) banners.push("Docker is not running — sandbox runs are NOT ISOLATED (subprocess fallback).")
 
+  const signature = banners.join("\u0000")
+  const [open, setOpen] = useState(banners.length > 0)
+
+  useEffect(() => {
+    if (!signature) {
+      setOpen(false)
+      return
+    }
+    setOpen(true)
+    const timer = window.setTimeout(() => setOpen(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [signature])
+
   return (
     <header className="border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md sticky top-0 z-40">
-      {banners.map((b) => (
-        <div key={b} className="bg-amber-500/10 border-b border-amber-500/20 px-6 py-1.5 flex items-center gap-2 text-xs text-amber-300">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span>{b}</span>
+      <div className={`grid transition-[grid-template-rows,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+        <div className="overflow-hidden">
+          {banners.map((b) => (
+            <div key={b} className="bg-amber-500/10 border-b border-amber-500/20 px-6 py-1.5 flex items-center gap-2 text-xs text-amber-300">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>{b}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      </div>
       <div className="px-6 py-3 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center shadow-lg shadow-emerald-500/20">
