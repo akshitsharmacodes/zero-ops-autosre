@@ -1,126 +1,67 @@
 import React, { useEffect, useRef, useState } from "react"
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { ArrowDown, Check, Copy, Terminal } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Terminal, Copy, Check, ArrowDown, Trash2 } from "lucide-react"
-import { TimelineEntry, LogTag } from "@/types/api"
+import { clock } from "@/lib/format"
+import type { LogTag, TimelineEntry } from "@/types/api"
 
-interface LiveTerminalProps {
-  timeline: TimelineEntry[]
+const TAG: Record<LogTag, string> = {
+  ALERT: "text-red-400 border-red-500/30 bg-red-500/10",
+  MITIGATE: "text-orange-300 border-orange-500/30 bg-orange-500/10",
+  DIAG: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10",
+  CORR: "text-purple-400 border-purple-500/30 bg-purple-500/10",
+  PATCH: "text-amber-400 border-amber-500/30 bg-amber-500/10",
+  AGENT: "text-yellow-200 border-yellow-500/20 bg-yellow-500/5",
+  GUARD: "text-fuchsia-300 border-fuchsia-500/30 bg-fuchsia-500/10",
+  TEST: "text-teal-300 border-teal-500/30 bg-teal-500/10",
+  PR: "text-emerald-400 border-emerald-500/30 bg-emerald-500/10",
+  LOOP: "text-sky-300 border-sky-500/30 bg-sky-500/10",
 }
 
-const TAG_STYLES: Record<LogTag, { bg: string; text: string; border: string }> = {
-  ALERT: { bg: "bg-red-500/10", text: "text-red-400", border: "border-red-500/30" },
-  DIAG: { bg: "bg-cyan-500/10", text: "text-cyan-400", border: "border-cyan-500/30" },
-  CORR: { bg: "bg-purple-500/10", text: "text-purple-400", border: "border-purple-500/30" },
-  PATCH: { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/30" },
-  TEST: { bg: "bg-teal-500/10", text: "text-teal-400", border: "border-teal-500/30" },
-  PR: { bg: "bg-emerald-500/10", text: "text-emerald-400", border: "border-emerald-500/30" },
-}
-
-export const LiveTerminal: React.FC<LiveTerminalProps> = ({ timeline }) => {
-  const scrollRef = useRef<HTMLDivElement>(null)
+export const LiveTerminal: React.FC<{ timeline: TimelineEntry[] }> = ({ timeline }) => {
+  const ref = useRef<HTMLDivElement>(null)
+  const [follow, setFollow] = useState(true)
   const [copied, setCopied] = useState(false)
-  const [autoScroll, setAutoScroll] = useState(true)
 
   useEffect(() => {
-    if (autoScroll && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [timeline, autoScroll])
+    if (follow && ref.current) ref.current.scrollTop = ref.current.scrollHeight
+  }, [timeline, follow])
 
-  const copyToClipboard = () => {
-    const rawText = timeline
-      .map((entry) => `[${entry.ts}] [${entry.tag}] (${entry.state}) ${entry.message}`)
-      .join("\n")
-    navigator.clipboard.writeText(rawText)
+  const copy = () => {
+    navigator.clipboard.writeText(timeline.map((e) => `${clock(e.ts)} [${e.tag}] ${e.message}`).join("\n"))
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    setTimeout(() => setCopied(false), 1500)
   }
 
   return (
-    <Card className="flex flex-col h-[380px] border-zinc-800 bg-zinc-950 font-mono">
-      <CardHeader className="py-2.5 px-4 flex flex-row items-center justify-between border-b border-zinc-800/80 bg-zinc-900/50">
+    <Card className="flex flex-col h-[420px] border-zinc-800 bg-zinc-950 font-mono">
+      <CardHeader className="py-2.5 px-4 flex flex-row items-center justify-between border-b border-zinc-800/80 bg-zinc-900/50 space-y-0">
         <div className="flex items-center gap-2">
           <Terminal className="h-4 w-4 text-emerald-400" />
-          <CardTitle className="text-xs uppercase tracking-wider font-bold text-zinc-200">
-            Live Agent Execution Terminal
-          </CardTitle>
+          <CardTitle className="text-xs uppercase tracking-wider font-bold text-zinc-200">Live agent log</CardTitle>
           <span className="text-[10px] text-zinc-500">({timeline.length} events)</span>
         </div>
-
-        <div className="flex items-center gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setAutoScroll(!autoScroll)}
-            className={`h-7 px-2 text-[11px] gap-1 ${
-              autoScroll ? "text-emerald-400 bg-emerald-500/10" : "text-zinc-500"
-            }`}
-            title="Auto Scroll"
-          >
-            <ArrowDown className="h-3 w-3" />
-            <span>Auto-scroll</span>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setFollow(!follow)}
+                  className={`h-7 px-2 text-[11px] gap-1 ${follow ? "text-emerald-400" : "text-zinc-500"}`}>
+            <ArrowDown className="h-3 w-3" /> Follow
           </Button>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={copyToClipboard}
-            className="h-7 px-2 text-[11px] text-zinc-400 hover:text-zinc-100 gap-1"
-          >
-            {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-            <span>{copied ? "Copied" : "Copy"}</span>
+          <Button variant="ghost" size="sm" onClick={copy} className="h-7 px-2 text-[11px] gap-1 text-zinc-400">
+            {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} Copy
           </Button>
         </div>
       </CardHeader>
-
-      <CardContent
-        ref={scrollRef}
-        className="p-3 flex-1 overflow-y-auto space-y-1.5 text-xs select-text scrollbar-thin scrollbar-thumb-zinc-800"
-      >
-        {timeline.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-zinc-500 text-xs">
-            Waiting for agent events... Trigger an incident from Demo Sheet to start.
+      <CardContent ref={ref} className="flex-1 overflow-y-auto p-3 space-y-1 text-[11.5px] leading-relaxed">
+        {timeline.length === 0 && <div className="text-zinc-600">Waiting for events…</div>}
+        {timeline.map((e) => (
+          <div key={e.id} className="flex gap-2 items-start">
+            <span className="text-zinc-600 shrink-0">{clock(e.ts)}</span>
+            <span className={`shrink-0 w-[68px] text-center text-[10px] font-bold px-1 rounded border ${TAG[e.tag] || "text-zinc-400 border-zinc-700"}`}>
+              {e.tag}
+            </span>
+            <span className="text-zinc-300 whitespace-pre-wrap break-words">{e.message}</span>
           </div>
-        ) : (
-          timeline.map((entry, index) => {
-            const tagStyle = TAG_STYLES[entry.tag] || {
-              bg: "bg-zinc-800",
-              text: "text-zinc-300",
-              border: "border-zinc-700",
-            }
-
-            return (
-              <div
-                key={index}
-                className="flex items-start gap-2.5 py-0.5 px-1 rounded hover:bg-zinc-900/50 transition-colors group"
-              >
-                {/* Timestamp */}
-                <span className="text-zinc-500 shrink-0 text-[11px]">
-                  {entry.ts}
-                </span>
-
-                {/* Colored Tag */}
-                <span
-                  className={`px-1.5 py-0.2 rounded text-[10px] font-bold border shrink-0 ${tagStyle.bg} ${tagStyle.text} ${tagStyle.border}`}
-                >
-                  [{entry.tag}]
-                </span>
-
-                {/* State Tag */}
-                <span className="text-[10px] text-zinc-500 shrink-0 hidden md:inline">
-                  ({entry.state})
-                </span>
-
-                {/* Message */}
-                <span className="text-zinc-200 leading-relaxed break-words flex-1">
-                  {entry.message}
-                </span>
-              </div>
-            )
-          })
-        )}
+        ))}
       </CardContent>
     </Card>
   )

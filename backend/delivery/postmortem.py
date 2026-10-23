@@ -1,66 +1,153 @@
-from datetime import datetime
-from typing import Dict, Any, List
-
-class PostMortemGenerator:
-    @staticmethod
-    def generate(incident_data: Dict[str, Any]) -> str:
-        incident_id = incident_data.get("id", "INC-8941")
-        mttr = incident_data.get("mttr_seconds", 38)
-        suspect = incident_data.get("suspect_commit", {}) or {}
-        attempts = incident_data.get("attempt", 2)
-        pr_url = incident_data.get("pr_url") or "https://github.com/zero-ops/victim-service/pull/42"
-
-        return f"""# Incident Post-Mortem: {incident_id}
-**Service:** `victim-service` (Django 4.2 / PostgreSQL 15)  
-**Date:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}  
-**Severity:** P1 (Critical Outage - Connection Pool Exhaustion)  
-**Status:** Resolved (PR Pending Review)  
-**MTTR:** **{mttr} seconds** (vs manual benchmark ~45 minutes)  
-**Pull Request:** [{pr_url}]({pr_url})
-
----
-
-## 1. Executive Summary
-At {datetime.utcnow().strftime('%H:%M:%S UTC')}, an alert was triggered when active and idle-in-transaction PostgreSQL connections breached 95% of capacity (98/100). AutoSRE autonomously ingested the alert, inspected `pg_stat_activity`, halted connection bleed via session termination, correlated the offending query with Git commit `{suspect.get('sha', '728a817')}`, synthesized a context-managed cursor patch, validated the fix inside a Docker sandbox across {attempts} iteration(s), and submitted a guarded pull request awaiting human review.
-
----
-
-## 2. Root Cause Analysis (RCA)
-- **Offending Commit:** `{suspect.get('sha', '728a817')}` - *"{suspect.get('message', 'perf(reports): add fast raw-sql user activity report')}"* by `{suspect.get('author', 'Charlie Contributor')}`.
-- **Defect:** In `analytics/views.py`, `user_activity_report` initialized a raw DB cursor via `cursor = connection.cursor()` without invoking `cursor.close()` or employing a Python context manager (`with connection.cursor() as cursor:`).
-- **Impact:** Each HTTP request to `/api/reports/user-activity/` held an unreleased PostgreSQL transaction open in `idle in transaction` state. Under normal traffic, available connection slots (100) were fully exhausted within 3 minutes, rejecting all subsequent requests with `FATAL: remaining connection slots are reserved`.
-
----
-
-## 3. Incident Timeline
-| Time | Agent Phase | Action / Observation |
-|---|---|---|
-| `T+00:00` | `ALERT_RECEIVED` | High connection alert received (98/100 active/idle) |
-| `T+00:04` | `DIAGNOSING` | Queried `pg_stat_activity`; isolated 88 `idle in transaction` sessions |
-| `T+00:07` | `STOP_BLEED` | Terminated hanging sessions with `pg_terminate_backend`; capacity restored |
-| `T+00:11` | `CORRELATING` | Correlated query signature to commit `{suspect.get('sha', '728a817')}` in `analytics/views.py` |
-| `T+00:18` | `PATCHING (Att 1)` | LLM generated patch; failed regression test in sandbox |
-| `T+00:27` | `PATCHING (Att 2)` | Fed stack trace to LLM; generated `with connection.cursor()` fix |
-| `T+00:33` | `TESTING_SANDBOX` | Pytest sandbox completed: 3 passed, 0 failed |
-| `T+00:38` | `PR_CREATED` | Guardrails passed (diff size 8 lines, no secrets); Draft PR opened |
-
----
-
-## 4. Remediation Diff
-```python
--    cursor = connection.cursor()
--    cursor.execute("SELECT 101 AS user_id, 'login_session' AS event, CURRENT_TIMESTAMP AS ts")
--    rows = cursor.fetchall()
-+    with connection.cursor() as cursor:
-+        cursor.execute("SELECT 101 AS user_id, 'login_session' AS event, CURRENT_TIMESTAMP AS ts")
-+        rows = cursor.fetchall()
-```
-
----
-
-## 5. Preventative Action Items
-- [x] Merge PR #{pr_url.split('/')[-1]} after human review.
-- [ ] Add lint rule banning direct unmanaged `connection.cursor()` calls.
-- [ ] Implement aggressive transaction timeout (`idle_in_transaction_session_timeout = 5000`) in PostgreSQL configurations.
-- [ ] Integrate AutoSRE pre-merge sandbox check in CI pipeline.
 """
+Post-mortem / PR body generator (FR-7.4): summary, timeline, root cause, impact, fix,
+verification evidence, prevention. Built from recorded facts only — no LLM prose — so
+every statement in it is traceable to the audit trail.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+
+
+def _fmt_ts(ts) -> str:
+    if isinstance(ts, datetime):
+        return ts.strftime("%H:%M:%S")
+    return str(ts)[11:19] if ts and len(str(ts)) >= 19 else str(ts or "")
+
+
+def _duration(seconds) -> str:
+    if seconds is None:
+        return "n/a"
+    seconds = int(seconds)
+    return f"{seconds // 60}m {seconds % 60}s" if seconds >= 60 else f"{seconds}s"
+
+
+def render_postmortem(*, incident_id: str, alert: dict, diagnosis: dict, mitigation: dict, suspect: dict,
+                      fix: dict, diff: str, sandbox: dict | None, guardrails: list[dict], timeline: list[dict],
+                      time_to_mitigate: float | None, time_to_pr: float | None, sandbox_isolated: bool | None,
+                      escalated_reason: str | None = None, ai_card: dict | None = None,
+                      related: list[dict] | None = None) -> str:
+    snap = diagnosis.get("snapshot", {})
+    commit = suspect.get("commit", {})
+    loc = suspect.get("location", {})
+    groups = diagnosis.get("stuck_sessions", {}).get("groups", [])
+    top = groups[0] if groups else {}
+    title = "Escalation report" if escalated_reason else "Post-mortem"
+
+    lines = [
+        f"## {title}: {incident_id}",
+        "",
+        "> Generated by **AutoSRE**. "
+        + ("The automated fix could not be completed — **human action required**." if escalated_reason
+           else ("Verified in an isolated sandbox. " if sandbox_isolated
+                 else "Verified with the NOT-isolated subprocess fallback (Docker was unavailable). ")
+           + "**A human must review and merge this PR** — AutoSRE never merges."),
+        "",
+        "### Summary",
+        fix.get("summary") or diagnosis.get("hypothesis", ""),
+    ]
+    if escalated_reason:
+        lines += ["", f"**Why escalated:** {escalated_reason}"]
+
+    lines += [
+        "",
+        "### Impact",
+        f"- Peak database connections: **{snap.get('total', '?')}/{snap.get('max_connections', '?')}** "
+        f"({snap.get('idle_in_transaction', '?')} idle in transaction)",
+        f"- Alert: `{alert.get('metric')}` = {alert.get('value')} from `{alert.get('source')}`",
+    ]
+    errors = diagnosis.get("logs", {}).get("errors", {})
+    if errors:
+        lines.append("- Application errors: " + ", ".join(f"{k.replace('_', ' ')} ×{v}" for k, v in errors.items()))
+    if mitigation.get("terminated") is not None:
+        lines.append(f"- Mitigation: ended **{mitigation['terminated']}** stuck `{mitigation.get('app_prefix')}` sessions "
+                     f"(service restored in {_duration(time_to_mitigate)}); other applications' sessions untouched")
+    if time_to_pr is not None:
+        lines.append(f"- Time from alert to verified fix PR: **{_duration(time_to_pr)}** (typical manual MTTR ≈ 45 min)")
+
+    lines += ["", "### Root cause"]
+    if commit:
+        lines += [
+            f"Commit `{commit.get('short_sha')}` by {commit.get('author')} — *{commit.get('message')}* "
+            f"(correlation confidence **{suspect.get('confidence')}**).",
+            "",
+            f"`{loc.get('file')}` lines {loc.get('start_line')}–{loc.get('end_line')}"
+            + (f" in `{loc.get('function')}`" if loc.get("function") else "") + ":",
+            "```",
+            (loc.get("snippet") or "").rstrip(),
+            "```",
+            "Evidence:",
+            *[f"- {e}" for e in suspect.get("evidence", [])],
+        ]
+    if top:
+        lines += ["", f"Stuck query ({top.get('count')} sessions from `{top.get('application_name')}`, "
+                      f"up to {top.get('max_idle_seconds', 0):.0f}s idle in transaction):",
+                  "```sql", top.get("example_query", ""), "```"]
+
+    if diff:
+        lines += ["", "### Fix", f"Risk: **{fix.get('risk', 'n/a')}** — {fix.get('risk_reason', '')}", "",
+                  "```diff", diff.rstrip()[:12000], "```"]
+
+    lines += ["", "### Verification"]
+    if sandbox:
+        engine = sandbox.get("engine")
+        iso = "isolated container (no network, no host mounts, non-root, resource limits)" if sandbox_isolated \
+            else "**NOT isolated** (subprocess fallback — Docker unavailable)"
+        lines += [
+            f"- Sandbox: `{engine}`, {iso}",
+            f"- Regression test fails on the original code: **{'yes' if sandbox.get('reproduced') else 'no'}**",
+            f"- Checks + full test suite on the patched code: **{'passed' if sandbox.get('passed') else 'failed'}** "
+            f"in {sandbox.get('duration_seconds')}s",
+            f"- Fix attempts used: {fix.get('attempts', '?')}",
+        ]
+        for step in sandbox.get("steps", []):
+            lines.append(f"  - `{step['command']}` on {step['tree']} code → exit {step['exit_code']}")
+    else:
+        lines.append("- No passing sandbox run.")
+    if guardrails:
+        lines += ["", "| Guardrail | Result | Details |", "|---|---|---|"]
+        lines += [f"| {g['name']} | {'✅' if g['passed'] else '❌'} | {g['details']} |" for g in guardrails]
+
+    if related:
+        lines += ["", "### Seen before"]
+        lines += [f"- {r['id']} ({r['match']}, {r['status']})" + (f": {r['pr_url']}" if r.get("pr_url") else "")
+                  for r in related]
+        lines.append("- A repeat means the earlier fix didn't hold or the pattern was reintroduced; consider a lint rule.")
+
+    lines += ["", "### Timeline (UTC)"]
+    lines += [f"- `{_fmt_ts(e.get('ts'))}` **{e.get('tag')}** {e.get('message')}" for e in timeline[-40:]]
+
+    lines += [
+        "", "### Prevention",
+        "- Acquire pooled/raw connections only through context managers (`with ...:`) so they are always released.",
+        "- Add a lint/review rule flagging `acquire()` / raw cursor usage without a matching release.",
+        "- Set PostgreSQL `idle_in_transaction_session_timeout` so leaked sessions are reclaimed automatically.",
+        "- Keep the regression test added in this PR; alert on pool `in_use` growth before the database saturates.",
+    ]
+    if ai_card:
+        lines += render_ai_card(ai_card)
+    return "\n".join(lines) + "\n"
+
+
+def render_ai_card(card: dict) -> list[str]:
+    """Responsible-AI card: plain statements a reviewer can check against the audit log."""
+    dm, ho, data = card["decision_maker"], card["human_oversight"], card["data_shared"]
+    ver, use = card["verification"], card["usage"]
+    decisions = ", ".join(f"{d['gate']}: {'approved' if d['approved'] else 'denied'} by {d['by']}"
+                          for d in ho.get("decisions", [])) or "none required"
+    lines = [
+        "", "### Responsible-AI card",
+        f"- **Who decided the code change:** {dm['mode']} mode - {dm['provider']} / `{dm['model']}`"
+        + (f" (fallback used: {dm['fallback_reason']})" if dm.get("fallback_used") else ""),
+        f"- **Human oversight:** {ho['approval_mode']} mode; decisions: {decisions}; {ho['merge']}.",
+        f"- **Data sent to an AI provider:** {data['sent_to']}. Evidence types: "
+        f"{', '.join(data['evidence_sources']) or 'none'}. Redacted before sending: {data['secrets_redacted']} secret(s), "
+        f"{data['personal_data_redacted']} personal-data value(s); {data['injection_lines_neutralized']} "
+        f"prompt-injection line(s) neutralized. Never sent: {data['never_sent']}.",
+        f"- **Verification:** sandbox {'isolated' if ver['sandbox_isolated'] else 'NOT isolated'}; regression test fails "
+        f"on old code: {ver['regression_test_fails_on_old_code']}; attempts: {ver['attempts']}.",
+        f"- **Resources:** {use['llm_calls']} LLM call(s), {use['prompt_tokens']} prompt + {use['completion_tokens']} "
+        f"completion tokens, {use['agent_steps']} agent step(s), {use['elapsed_seconds']}s elapsed.",
+        "- **Known limitations:**",
+    ]
+    lines += [f"  - {limit}" for limit in card.get("limitations", [])]
+    return lines

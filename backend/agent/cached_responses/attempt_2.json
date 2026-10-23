@@ -1,8 +1,0 @@
-{
-  "attempt": 2,
-  "confidence": 0.98,
-  "risk": "Low",
-  "reasoning": "Incorporating stack trace feedback: using context manager 'with connection.cursor() as cursor:' to guarantee cursor closure and release idle-in-transaction connections.",
-  "patch": "def user_activity_report(request):\n    with connection.cursor() as cursor:\n        cursor.execute(\"SELECT 101 AS user_id, 'login_session' AS event, CURRENT_TIMESTAMP AS ts\")\n        rows = cursor.fetchall()\n    data = [{'user_id': r[0], 'event': r[1], 'ts': str(r[2])} for r in rows]\n    return JsonResponse({'status': 'success', 'count': len(data), 'data': data})",
-  "unified_diff": "--- a/analytics/views.py\n+++ b/analytics/views.py\n@@ -27,6 +27,6 @@\n-    cursor = connection.cursor()\n-    cursor.execute(\"SELECT 101 AS user_id, 'login_session' AS event, CURRENT_TIMESTAMP AS ts\")\n-    rows = cursor.fetchall()\n+    with connection.cursor() as cursor:\n+        cursor.execute(\"SELECT 101 AS user_id, 'login_session' AS event, CURRENT_TIMESTAMP AS ts\")\n+        rows = cursor.fetchall()\n     data = [{\"user_id\": r[0], \"event\": r[1], \"ts\": str(r[2])} for r in rows]\n     return JsonResponse({\"status\": \"success\", \"count\": len(data), \"data\": data})"
-}

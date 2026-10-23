@@ -1,98 +1,33 @@
 import React from "react"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { AlertCircle, CheckCircle2, RotateCw, Flame, ChevronRight, Activity, Shield } from "lucide-react"
-import { Incident, AgentState } from "@/types/api"
+import { Activity } from "lucide-react"
+import { clock, STATUS_LABEL, STATUS_TONE, TONE_CLASSES } from "@/lib/format"
+import type { IncidentSummary } from "@/types/api"
 
-interface SidebarProps {
-  incidents: Incident[]
-  selectedId: string
-  onSelectIncident: (id: string) => void
-  onTriggerNew: () => void
+interface Props {
+  incidents: IncidentSummary[]
+  selectedId?: string
+  onSelect: (id: string) => void
 }
 
-const STATE_BADGE: Record<AgentState, { label: string; variant: "success" | "warning" | "destructive" | "default" | "secondary" }> = {
-  ALERT_RECEIVED: { label: "Alert", variant: "destructive" },
-  DIAGNOSING: { label: "Diagnosing", variant: "warning" },
-  CORRELATING: { label: "Correlating", variant: "warning" },
-  PATCHING: { label: "Patching", variant: "warning" },
-  TESTING_IN_SANDBOX: { label: "Sandbox", variant: "warning" },
-  PR_CREATED: { label: "PR Open", variant: "success" },
-  RESOLVED: { label: "Resolved", variant: "success" },
-  ESCALATED: { label: "Escalated", variant: "destructive" },
-}
-
-export const Sidebar: React.FC<SidebarProps> = ({
-  incidents,
-  selectedId,
-  onSelectIncident,
-  onTriggerNew,
-}) => {
-  return (
-    <aside className="w-full md:w-64 lg:w-72 shrink-0 border-r border-zinc-800 bg-zinc-950/80 p-4 flex flex-col justify-between overflow-y-auto">
-      <div className="space-y-4">
+export const Sidebar: React.FC<Props> = ({ incidents, selectedId, onSelect }) => (
+  <aside className="w-full md:w-64 border-r border-zinc-800/80 bg-zinc-950/60 p-3 space-y-2 md:overflow-y-auto">
+    <div className="flex items-center gap-2 px-1 pb-2 text-xs uppercase tracking-wider text-zinc-400 font-semibold">
+      <Activity className="h-3.5 w-3.5" /> Incidents
+    </div>
+    {incidents.length === 0 && <p className="text-xs text-zinc-600 px-1">None yet.</p>}
+    {incidents.map((inc) => (
+      <button key={inc.id} onClick={() => onSelect(inc.id)}
+              className={`w-full text-left rounded-lg border p-2.5 transition-colors ${
+                inc.id === selectedId ? "border-emerald-500/40 bg-emerald-500/5" : "border-zinc-800 hover:border-zinc-700"}`}>
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-emerald-400" />
-            <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-300">
-              Active Incidents
-            </h2>
-          </div>
-          <Badge variant="outline" className="text-[10px] font-mono border-zinc-800">
-            {incidents.length}
-          </Badge>
+          <span className="font-mono text-xs text-zinc-200">{inc.id}</span>
+          <span className="text-[10px] text-zinc-500">{clock(inc.created_at)}</span>
         </div>
-
-        {/* Incident List */}
-        <div className="space-y-2">
-          {incidents.map((inc) => {
-            const isSelected = inc.id === selectedId
-            const badgeConfig = STATE_BADGE[inc.status] || { label: inc.status, variant: "default" }
-
-            return (
-              <button
-                key={inc.id}
-                onClick={() => onSelectIncident(inc.id)}
-                className={`w-full text-left p-3 rounded-lg border transition-all ${
-                  isSelected
-                    ? "border-emerald-500/50 bg-emerald-950/20 shadow-sm"
-                    : "border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-800/60 hover:border-zinc-700"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-mono text-xs font-bold text-zinc-200">
-                    {inc.id}
-                  </span>
-                  <Badge variant={badgeConfig.variant} className="text-[10px] font-mono">
-                    {badgeConfig.label}
-                  </Badge>
-                </div>
-
-                <div className="text-[11px] text-zinc-400 truncate mb-1">
-                  PostgreSQL Connection Pool Exhaustion (98/100)
-                </div>
-
-                <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono">
-                  <span>victim-service</span>
-                  <span>Attempt {Math.max(1, inc.attempt)}/3</span>
-                </div>
-              </button>
-            )
-          })}
+        <div className="flex items-center gap-1.5 mt-1.5">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${TONE_CLASSES[STATUS_TONE[inc.status]]}`}>{STATUS_LABEL[inc.status]}</span>
+          {inc.mode !== "live" && <span className="text-[10px] text-zinc-500 uppercase">{inc.mode}</span>}
         </div>
-      </div>
-
-      {/* Trigger Incident Button */}
-      <div className="pt-4 border-t border-zinc-800/80">
-        <Button
-          onClick={onTriggerNew}
-          variant="outline"
-          className="w-full gap-2 text-xs border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 hover:text-zinc-100 text-zinc-300"
-        >
-          <Flame className="h-3.5 w-3.5 text-red-400" />
-          <span>Simulate New Incident</span>
-        </Button>
-      </div>
-    </aside>
-  )
-}
+      </button>
+    ))}
+  </aside>
+)

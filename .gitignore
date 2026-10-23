@@ -25,3 +25,12 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 victim_service/.git
+
+# AutoSRE runtime data (seeded repos, sandbox temp, deliveries, logs)
+var/
+.env
+*.tsbuildinfo
+
+# Secrets (GitHub App private key etc.)
+secrets/
+*.pem

@@ -1,76 +1,76 @@
 import React from "react"
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { toast } from "sonner"
+import { ExternalLink, GitMerge, GitPullRequest, Users } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { GitPullRequest, ExternalLink, UserCheck, ShieldAlert, Check } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { useMerge, useTeammatePush } from "@/hooks/useAutoSRE"
+import type { Incident } from "@/types/api"
 
-interface PrCardProps {
-  prUrl: string | null
-  status: string
-  branch?: string
-}
+export const PrCard: React.FC<{ incident?: Incident }> = ({ incident }) => {
+  const merge = useMerge()
+  const teammate = useTeammatePush()
+  const pr = incident?.pull_request
+  const isLocal = pr?.provider === "local"
+  const open = pr?.state === "open"
 
-export const PrCard: React.FC<PrCardProps> = ({
-  prUrl = "https://github.com/zero-ops/victim-service/pull/42",
-  status = "awaiting_human_review",
-  branch = "autosre/fix-connection-leak",
-}) => {
-  const finalPrUrl = prUrl || "https://github.com/zero-ops/victim-service/pull/42"
+  const state = !pr?.number ? null
+    : pr.state === "merged" || incident?.status === "RESOLVED" ? { label: "merged", variant: "success" as const }
+    : incident?.status === "READY_TO_MERGE" ? { label: "ready to merge", variant: "info" as const }
+    : incident?.status === "UPDATING_PR" ? { label: "repairing", variant: "warning" as const }
+    : pr.draft ? { label: "draft", variant: "outline" as const }
+    : { label: pr.state || "open", variant: "outline" as const }
 
   return (
-    <Card className="border-zinc-800 bg-gradient-to-br from-zinc-950 via-zinc-950 to-purple-950/20">
-      <CardHeader className="py-2.5 px-4 flex flex-row items-center justify-between border-b border-zinc-800/80 bg-zinc-900/50">
+    <Card className="border-zinc-800 bg-zinc-950">
+      <CardHeader className="py-2.5 px-4 border-b border-zinc-800/80 bg-zinc-900/50 space-y-0 flex flex-row items-center justify-between">
         <div className="flex items-center gap-2">
           <GitPullRequest className="h-4 w-4 text-emerald-400" />
-          <CardTitle className="text-xs uppercase tracking-wider font-bold text-zinc-200">
-            Guarded Delivery: Pull Request
-          </CardTitle>
+          <CardTitle className="text-xs uppercase tracking-wider font-bold text-zinc-200">Pull request</CardTitle>
         </div>
-
-        <Badge variant="warning" className="text-[10px] font-mono flex items-center gap-1">
-          <UserCheck className="h-3 w-3" />
-          Awaiting Human Review
-        </Badge>
+        {state && <Badge variant={state.variant} className="text-[10px]">{state.label}</Badge>}
       </CardHeader>
-
-      <CardContent className="p-4 space-y-3 text-xs">
-        <div className="p-3 rounded-lg bg-zinc-900/60 border border-zinc-800 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-zinc-400">Target Head:</span>
-            <span className="font-mono text-purple-300 font-semibold">{branch}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-zinc-400">Base Branch:</span>
-            <span className="font-mono text-zinc-300">main</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-zinc-400">Auto-Merge Policy:</span>
-            <span className="font-mono text-red-400 font-medium">DISABLED (Human Review Only)</span>
-          </div>
-        </div>
-
-        {/* PR CTA Button */}
-        <div className="pt-1">
-          <a
-            href={finalPrUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-full inline-block"
-          >
-            <Button
-              variant="sre"
-              className="w-full gap-2 text-xs font-semibold shadow-md shadow-emerald-950/50 py-2.5"
-            >
-              <GitPullRequest className="h-4 w-4" />
-              <span>Review Pull Request #{finalPrUrl.split("/").pop()} on GitHub</span>
-              <ExternalLink className="h-3.5 w-3.5 ml-auto" />
-            </Button>
-          </a>
-        </div>
-
-        <p className="text-[11px] text-zinc-500 text-center font-mono">
-          Guardrail Guarantee: AutoSRE never auto-merges and never pushes directly to main.
-        </p>
+      <CardContent className="p-4 space-y-3">
+        {!pr?.number ? (
+          <p className="text-xs text-zinc-500">
+            {incident?.status === "ESCALATED" ? "No PR: escalated to a human (see post-mortem tab)." : "Opened after the fix passes the sandbox."}
+          </p>
+        ) : (
+          <>
+            <div className="text-xs text-zinc-200 font-medium">#{pr.number} {pr.title}</div>
+            <div className="text-[11px] font-mono text-zinc-400">{pr.head_branch} → {pr.base_branch}</div>
+            {pr.url?.startsWith("http") ? (
+              <a href={pr.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-emerald-400 hover:underline">
+                Open on GitHub <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : (
+              <div className="text-[11px] text-zinc-500">{pr.url} (local origin)</div>
+            )}
+            <div className="text-[11px] text-zinc-400">
+              Repair rounds: {pr.rounds || 0} · AutoSRE never merges — a human does.
+            </div>
+            {isLocal && open && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1" disabled={teammate.isPending}
+                        onClick={() => teammate.mutate(undefined, {
+                          onSuccess: (r) => toast.info("Teammate pushed to main", { description: `${r.sha.slice(0, 8)} — watch the PR loop repair the conflict.` }),
+                          onError: (e) => toast.error((e as Error).message),
+                        })}>
+                  <Users className="h-3 w-3" /> Simulate teammate push
+                </Button>
+                {incident?.status === "READY_TO_MERGE" && (
+                  <Button size="sm" variant="sre" className="h-7 text-[11px] gap-1" disabled={merge.isPending}
+                          onClick={() => merge.mutate(incident.id, {
+                            onSuccess: () => toast.success("Merged by you (the human reviewer)"),
+                            onError: (e) => toast.error((e as Error).message),
+                          })}>
+                    <GitMerge className="h-3 w-3" /> Merge (as human reviewer)
+                  </Button>
+                )}
+              </div>
+            )}
+          </>
+        )}
       </CardContent>
     </Card>
   )

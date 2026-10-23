@@ -1,205 +1,86 @@
 import React from "react"
+import { AlertCircle, Bell, CheckCircle2, GitMerge, GitPullRequest, Loader2, Search, ShieldCheck, Siren, Wrench } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { CheckCircle2, RotateCw, AlertCircle, GitPullRequest, Search, Wrench, ShieldCheck, ArrowRight } from "lucide-react"
-import { AgentState } from "@/types/api"
+import { STATUS_LABEL, TONE_CLASSES } from "@/lib/format"
+import type { Incident, IncidentStatus } from "@/types/api"
 
-interface PipelineStepperProps {
-  currentState: AgentState
-  attempt: number
-  maxAttempts: number
-}
+type StepState = "done" | "active" | "failed" | "pending" | "waiting"
 
-interface StepConfig {
-  id: string
-  label: string
-  description: string
-  icon: React.ComponentType<{ className?: string }>
-  associatedStates: AgentState[]
-}
-
-const STEPS: StepConfig[] = [
-  {
-    id: "diag",
-    label: "Diagnosing",
-    description: "pg_stat_activity & stop bleeding",
-    icon: Search,
-    associatedStates: ["ALERT_RECEIVED", "DIAGNOSING", "CORRELATING"],
-  },
-  {
-    id: "patch",
-    label: "Patching",
-    description: "LLM synthesis & context manager",
-    icon: Wrench,
-    associatedStates: ["PATCHING"],
-  },
-  {
-    id: "test",
-    label: "Testing in Sandbox",
-    description: "pytest & docker-py isolation",
-    icon: ShieldCheck,
-    associatedStates: ["TESTING_IN_SANDBOX"],
-  },
-  {
-    id: "delivery",
-    label: "PR Created",
-    description: "Guardrails, draft PR & post-mortem",
-    icon: GitPullRequest,
-    associatedStates: ["PR_CREATED", "RESOLVED"],
-  },
+const STEPS: { id: string; label: string; hint: string; icon: React.ElementType; states: IncidentStatus[] }[] = [
+  { id: "alert", label: "Alert", hint: "Monitor / webhook", icon: Bell, states: ["ALERT_RECEIVED"] },
+  { id: "diag", label: "Diagnosing", hint: "pg_stat_activity + logs", icon: Search, states: ["DIAGNOSING"] },
+  { id: "mitigate", label: "Stop the bleeding", hint: "end stuck sessions", icon: Siren, states: ["MITIGATING"] },
+  { id: "corr", label: "Root cause", hint: "git history scoring", icon: Search, states: ["CORRELATING"] },
+  { id: "patch", label: "Patching", hint: "coding agent", icon: Wrench, states: ["PATCHING"] },
+  { id: "test", label: "Testing", hint: "sandbox", icon: ShieldCheck, states: ["TESTING_IN_SANDBOX"] },
+  { id: "pr", label: "PR created", hint: "watch & repair", icon: GitPullRequest, states: ["PR_CREATED", "UPDATING_PR"] },
+  { id: "merge", label: "Ready → merged", hint: "human merges", icon: GitMerge, states: ["READY_TO_MERGE", "RESOLVED"] },
 ]
 
-export const PipelineStepper: React.FC<PipelineStepperProps> = ({
-  currentState,
-  attempt,
-  maxAttempts,
-}) => {
-  // Determine step status
-  const getStepStatus = (index: number): "done" | "active" | "failed" | "pending" => {
-    if (currentState === "ESCALATED") {
-      if (index === 2) return "failed"
-    }
+function lastActiveIndex(incident: Incident): number {
+  // For escalations, find the last state reached from the timeline.
+  const states = incident.timeline.map((e) => e.state).filter((s) => s !== "ESCALATED" && s !== "AWAITING_APPROVAL")
+  const last = states[states.length - 1] || "ALERT_RECEIVED"
+  return STEPS.findIndex((s) => s.states.includes(last))
+}
 
-    if (currentState === "RESOLVED" || currentState === "PR_CREATED") {
-      return "done"
-    }
+function stepState(idx: number, incident: Incident): StepState {
+  const status = incident.status
+  // PATCHING <-> TESTING alternate during retries; treat both as the "fix" phase.
+  const current = status === "ESCALATED" || status === "AWAITING_APPROVAL" ? lastActiveIndex(incident) : STEPS.findIndex((s) => s.states.includes(status))
+  if (status === "ESCALATED") return idx < current ? "done" : idx === current ? "failed" : "pending"
+  if (status === "RESOLVED") return "done"
+  if (status === "READY_TO_MERGE") return idx < 7 ? "done" : "waiting"
+  const inFix = status === "PATCHING" || status === "TESTING_IN_SANDBOX"
+  if (inFix && (idx === 4 || idx === 5)) return STEPS[idx].states.includes(status) ? "active" : incident.attempt > 0 ? "done" : "pending"
+  return idx < current ? "done" : idx === current ? "active" : "pending"
+}
 
-    // Active state index
-    let activeIndex = 0
-    if (["ALERT_RECEIVED", "DIAGNOSING", "CORRELATING"].includes(currentState)) activeIndex = 0
-    else if (currentState === "PATCHING") activeIndex = 1
-    else if (currentState === "TESTING_IN_SANDBOX") activeIndex = 2
-    else activeIndex = 3
-
-    if (index < activeIndex) return "done"
-    if (index === activeIndex) return "active"
-    return "pending"
+export const PipelineStepper: React.FC<{ incident?: Incident }> = ({ incident }) => {
+  if (!incident) {
+    return (
+      <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-5 text-sm text-zinc-400">
+        No incident yet. Open <span className="text-emerald-400">Controls → Start incident</span> to send traffic to the victim
+        service; the monitor will raise the alert by itself when connections pass the threshold.
+      </div>
+    )
   }
-
-  // Show failed retry loop-back indicator if on attempt >= 2 and currently in patching or after sandbox
-  const isRetrying = attempt > 1
-
+  const rounds = incident.pull_request?.rounds || 0
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-lg backdrop-blur-sm relative overflow-hidden">
-      {/* Background glow on active */}
-      <div className="absolute top-0 right-0 w-96 h-full bg-gradient-to-l from-emerald-500/5 to-transparent pointer-events-none" />
-
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5 pb-4 border-b border-zinc-800/60">
+    <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold tracking-wider uppercase text-zinc-300 font-mono">
-              Autonomous Remediation Pipeline
-            </h2>
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-          </div>
+          <h2 className="text-sm font-semibold tracking-wider uppercase text-zinc-300 font-mono">{incident.id}</h2>
           <p className="text-xs text-zinc-400 mt-0.5">
-            Multi-agent state machine with self-healing feedback loop
+            {STATUS_LABEL[incident.status]}
+            {incident.status === "ESCALATED" && incident.escalation_reason ? ` — ${incident.escalation_reason}` : ""}
           </p>
         </div>
-
         <div className="flex items-center gap-2">
-          {isRetrying && (
-            <Badge variant="destructive" className="flex items-center gap-1 text-[11px] font-mono animate-pulse">
-              <RotateCw className="h-3 w-3 animate-spin" />
-              Self-Healing Loop Triggered
-            </Badge>
+          {incident.attempt > 1 && (
+            <Badge variant="destructive" className="text-[11px] font-mono">Self-healing: retried with test feedback</Badge>
           )}
-          <Badge variant="outline" className="text-xs font-mono border-zinc-700 bg-zinc-900 text-zinc-200">
-            Attempt {Math.max(1, attempt)}/{maxAttempts}
-          </Badge>
+          {rounds > 0 && <Badge variant="info" className="text-[11px] font-mono">PR repair rounds: {rounds}</Badge>}
+          <Badge variant="outline" className="text-xs font-mono">Attempt {Math.max(incident.attempt, 0)}/{incident.max_attempts}</Badge>
         </div>
       </div>
-
-      {/* Stepper Grid */}
-      <div className="relative">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 relative z-10">
-          {STEPS.map((step, idx) => {
-            const status = getStepStatus(idx)
-            const Icon = step.icon
-
-            return (
-              <div
-                key={step.id}
-                className={`relative flex flex-col p-4 rounded-lg border transition-all duration-300 ${
-                  status === "active"
-                    ? "border-amber-500/50 bg-amber-500/5 shadow-md shadow-amber-500/10"
-                    : status === "done"
-                    ? "border-emerald-500/40 bg-emerald-500/5"
-                    : status === "failed"
-                    ? "border-red-500/50 bg-red-500/5"
-                    : "border-zinc-800/80 bg-zinc-900/40 opacity-70"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`h-7 w-7 rounded-md flex items-center justify-center ${
-                        status === "active"
-                          ? "bg-amber-500 text-zinc-950 animate-pulse"
-                          : status === "done"
-                          ? "bg-emerald-500 text-zinc-950"
-                          : status === "failed"
-                          ? "bg-red-500 text-zinc-950"
-                          : "bg-zinc-800 text-zinc-400"
-                      }`}
-                    >
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <span className="text-xs font-semibold text-zinc-200">
-                      {step.label}
-                    </span>
-                  </div>
-
-                  {status === "done" && (
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                  )}
-                  {status === "active" && (
-                    <RotateCw className="h-3.5 w-3.5 text-amber-400 animate-spin" />
-                  )}
-                  {status === "failed" && (
-                    <AlertCircle className="h-4 w-4 text-red-400" />
-                  )}
-                </div>
-
-                <p className="text-[11px] text-zinc-400 leading-relaxed mt-1">
-                  {step.description}
-                </p>
-
-                {/* Progress bar inside each card */}
-                <div className="mt-3 h-1 w-full rounded-full bg-zinc-800 overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-500 ${
-                      status === "done"
-                        ? "w-full bg-emerald-500"
-                        : status === "active"
-                        ? "w-2/3 bg-amber-400 animate-pulse"
-                        : status === "failed"
-                        ? "w-full bg-red-500"
-                        : "w-0"
-                    }`}
-                  />
-                </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+        {STEPS.map((step, idx) => {
+          const st = stepState(idx, incident)
+          const Icon = step.icon
+          return (
+            <div key={step.id} className={`p-2.5 rounded-lg border ${TONE_CLASSES[st === "active" ? "active" : st === "done" ? "done" : st === "failed" ? "failed" : st === "waiting" ? "waiting" : "pending"]}`}>
+              <div className="flex items-center justify-between">
+                <Icon className="h-4 w-4" />
+                {st === "done" && <CheckCircle2 className="h-3.5 w-3.5" />}
+                {st === "active" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {st === "failed" && <AlertCircle className="h-3.5 w-3.5" />}
               </div>
-            )
-          })}
-        </div>
-
-        {/* Loop-back retry indicator banner */}
-        {isRetrying && (
-          <div className="mt-3 py-1.5 px-3 rounded-lg border border-red-500/30 bg-red-500/10 flex items-center justify-between text-xs text-red-300">
-            <div className="flex items-center gap-2">
-              <RotateCw className="h-3.5 w-3.5 text-red-400 animate-spin" />
-              <span>
-                <strong className="font-semibold text-red-200">Retry Feedback Loop:</strong> Sandbox failure in Attempt 1 captured stack trace → fed to LLM → successfully synthesized Attempt 2.
-              </span>
+              <div className="mt-1.5 text-[11px] font-semibold leading-tight">{step.label}</div>
+              <div className="text-[10px] opacity-70 leading-tight">{step.hint}</div>
             </div>
-            <span className="font-mono text-[10px] bg-red-950/60 px-2 py-0.5 rounded border border-red-800/40">
-              Stack Trace Feedback
-            </span>
-          </div>
-        )}
+          )
+        })}
       </div>
     </div>
   )
