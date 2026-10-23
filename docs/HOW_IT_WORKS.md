@@ -180,4 +180,28 @@ The same idea applies to databases. AutoSRE talks to them through **adapters**, 
 - **When things go wrong:** if the database is unreachable, if no commit matches, if all attempts fail, or if GitHub is down, the incident is **ESCALATED**. The patch and an escalation report are saved under `var/deliveries/<incident>/`, so a human can take over immediately.
 - **Proof:** one automated test plays the whole story. It covers a 98% full database, diagnosis, stop-the-bleeding, Charlie's commit found, attempt 1 failing and attempt 2 passing, the PR opening, a teammate pushing a conflicting change, the agent merging both sides, ready-to-merge, and a human merging. The final `main` contains both the fix and the teammate's change.
 
-*Next sections are added as each phase is built.*
+### Phase 7: The dashboard and the live stream
+- **Live updates without refreshing:** the browser keeps one connection open (Server-Sent Events). Every line AutoSRE writes into its database is pushed to the page within half a second. If the connection drops, the browser reconnects and continues from the last line it saw. Nothing is lost, because the lines live in the database, not in memory.
+- **Honesty on screen:** yellow banners appear whenever something isn't "the real thing". That covers cached decisions, a replay, the LLM being unreachable, or the sandbox not being isolated. A judge, or your manager, should never be fooled by a demo.
+- **Buttons that play "the outside world":** *Start incident* sends normal web traffic. *Simulate teammate push* creates the merge conflict. *Merge (as human reviewer)* is you pressing Merge. None of them let AutoSRE skip a rule.
+
+### Phase 8: Tests and one-command running
+- `python scripts/setup.py` prepares everything, `python scripts/dev.py` runs the backend and dashboard, and `python scripts/demo.py --conflict --merge` plays the whole story from the terminal.
+- The test suite covers every test case in the SRS (TC-1 to TC-14), plus a full offline story. Tests that need Docker or PostgreSQL skip themselves until those are running.
+
+---
+
+## 7. Running the demo (what to say while it runs)
+
+1. **Start incident.** "Users are hitting the activity report. Watch the red area: those are connections stuck *idle in transaction*."
+2. **The alert fires on its own at 90%.** "Nobody pressed a button: the monitor noticed."
+3. **Stop the bleeding.** "AutoSRE ended only the stuck sessions of that one app. Service is back in seconds. That's first aid, not the cure."
+4. **Root cause.** "It scored recent commits against the stuck query and found Charlie's commit, with a confidence score and `git blame` proof."
+5. **Agent steps tab.** "The agent reads the code, writes a test that reproduces the bug, and makes a fix. The test **fails**, because its first fix put `release()` after `return`. It reads the error and switches to the context manager. Now it passes."
+6. **Guardrails panel.** "Every rule is checked by code, not by the AI."
+7. **PR opens, then becomes READY TO MERGE.** "Now the outer loop watches the PR."
+8. **Simulate teammate push.** "A teammate changed the same lines. Conflict! AutoSRE merges `main`, the agent keeps *both* changes, the sandbox re-tests, and the PR is green again."
+9. **Merge (as human reviewer).** "A human makes the final call. Resolved."
+10. **Post-mortem tab and Audit JSON.** "The report wrote itself, and every decision is on record."
+
+**Backup plan:** if Wi-Fi or the API fails, cached mode still runs the real tools. If everything fails, use **Replay**. Record a good run first with `python backend/manage.py export_replay <incident_id>`.
