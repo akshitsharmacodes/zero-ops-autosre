@@ -1,7 +1,5 @@
-from django.urls import path, include
-from analytics.views import health_check
+from django.urls import include, path
 
 urlpatterns = [
-    path('health/', health_check, name='health_check'),
-    path('api/', include('analytics.urls')),
+    path("api/", include("analytics.urls")),
 ]

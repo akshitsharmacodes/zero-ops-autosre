@@ -3,71 +3,61 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'victim-service-test-secret-key-insecure-by-design'
-DEBUG = True
-ALLOWED_HOSTS = ['*']
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "victim-service-dev-only")
+DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
+ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'analytics',
+    "django.contrib.contenttypes",
+    "django.contrib.auth",
+    "analytics",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
+    "analytics.observability.RequestLogMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "django.middleware.common.CommonMiddleware",
 ]
 
-ROOT_URLCONF = 'victim_project.urls'
+ROOT_URLCONF = "victim_project.urls"
+WSGI_APPLICATION = "victim_project.wsgi.application"
 
-TEMPLATES = [
-    {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
-            ],
-        },
-    },
-]
-
-WSGI_APPLICATION = 'victim_project.wsgi.application'
-
-PG_HOST = os.environ.get('POSTGRES_HOST', '')
-if PG_HOST:
+if os.environ.get("POSTGRES_HOST"):
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ.get('POSTGRES_DB', 'victim_db'),
-            'USER': os.environ.get('POSTGRES_USER', 'autosre'),
-            'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'autosre_password'),
-            'HOST': PG_HOST,
-            'PORT': os.environ.get('POSTGRES_PORT', '5432'),
-            'CONN_MAX_AGE': 0,
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "HOST": os.environ["POSTGRES_HOST"],
+            "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+            "NAME": os.environ.get("POSTGRES_DB", "victim_db"),
+            "USER": os.environ.get("POSTGRES_USER", "victim_app"),
+            "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
+            "CONN_MAX_AGE": 0,
+            "OPTIONS": {"application_name": "victim-service:orm"},
         }
     }
 else:
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
         }
     }
 
-LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
-USE_I18N = True
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
 USE_TZ = True
-STATIC_URL = 'static/'
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+LOG_DIR = Path(os.environ.get("VICTIM_LOG_DIR", BASE_DIR / "logs"))
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"json": {"()": "analytics.observability.JsonFormatter"}},
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "json"},
+        "file": {"class": "logging.FileHandler", "filename": str(LOG_DIR / "victim.log"), "formatter": "json"},
+    },
+    "root": {"handlers": ["console", "file"], "level": "INFO"},
+}

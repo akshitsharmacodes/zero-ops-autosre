@@ -1,117 +1,79 @@
 #!/usr/bin/env python3
 """
-Traffic Simulator for AutoSRE Demo.
-Deterministically simulates connection exhaustion up to ~98/100 connections.
-Can run against live PostgreSQL or via HTTP against victim service.
+Load test: sends realistic HTTP traffic to the service.
+
+Most requests hit the activity report (the busiest page in production), with some
+health / metrics / top-pages traffic mixed in. It only talks HTTP — it never opens
+database connections itself.
 """
-
 import argparse
-import sys
-import time
+import random
 import threading
-import logging
-from typing import List, Any
+import time
+import urllib.error
+import urllib.request
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("traffic_simulator")
+ROUTES = [
+    ("/api/reports/user-activity/", 6),
+    ("/api/reports/top-pages/", 1),
+    ("/api/metrics/summary/", 1),
+    ("/api/health/", 1),
+]
 
-# Global pool to hold connections open in idle-in-transaction state
-_ACTIVE_CONNECTIONS: List[Any] = []
-_STOP_EVENT = threading.Event()
 
-def simulate_with_psycopg2(host: str, port: int, dbname: str, user: str, password: str, target: int = 98, duration: int = 300):
-    """
-    Opens connections directly to PostgreSQL and puts them into idle in transaction.
-    """
+def run(base_url, total, concurrency, delay, stop_event=None, on_result=None, seed=7):
+    rng = random.Random(seed)
+    paths = [p for p, weight in ROUTES for _ in range(weight)]
+    plan = [rng.choice(paths) for _ in range(total)]
+    stop_event = stop_event or threading.Event()
+    lock = threading.Lock()
+    counts = {"ok": 0, "error": 0}
+
+    def worker():
+        while not stop_event.is_set():
+            with lock:
+                if not plan:
+                    return
+                path = plan.pop()
+            status = _get(base_url + path)
+            with lock:
+                counts["ok" if status == 200 else "error"] += 1
+            if on_result:
+                on_result(path, status)
+            time.sleep(delay)
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(concurrency)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return counts
+
+
+def _get(url):
     try:
-        import psycopg2
-    except ImportError:
-        logger.warning("psycopg2 not installed; falling back to simulated connection gauge.")
-        simulate_mock_traffic(target, duration)
-        return
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            return resp.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+    except Exception:
+        return 0
 
-    logger.info(f"Targeting {target} PostgreSQL connections on {host}:{port}/{dbname}...")
-    _STOP_EVENT.clear()
-    
-    conns = []
-    try:
-        for i in range(target):
-            if _STOP_EVENT.is_set():
-                break
-            try:
-                conn = psycopg2.connect(
-                    host=host,
-                    port=port,
-                    dbname=dbname,
-                    user=user,
-                    password=password,
-                    connect_timeout=3
-                )
-                conn.autocommit = False
-                cur = conn.cursor()
-                # Run query and leave transaction open (idle in transaction)
-                cur.execute("SELECT 101 AS user_id, 'login_session' AS event, NOW() AS ts")
-                conns.append((conn, cur))
-                if (i + 1) % 10 == 0 or (i + 1) == target:
-                    logger.info(f"Generated {i + 1}/{target} open connections (idle in transaction)")
-            except Exception as e:
-                logger.warning(f"Connection #{i+1} failed: {e}")
-                break
-            time.sleep(0.02)
-
-        logger.info(f"Successfully saturated pool to {len(conns)} active/idle connections. Holding for {duration}s...")
-        start_time = time.time()
-        while time.time() - start_time < duration and not _STOP_EVENT.is_set():
-            time.sleep(1)
-
-    finally:
-        logger.info(f"Cleaning up {len(conns)} simulated connections...")
-        for conn, cur in conns:
-            try:
-                cur.close()
-                conn.close()
-            except Exception:
-                pass
-        logger.info("Traffic simulation finished.")
-
-def simulate_mock_traffic(target: int = 98, duration: int = 300):
-    """Fallback simulation when running without live Postgres daemon."""
-    logger.info(f"Simulating traffic ramp-up to {target}/100 connections...")
-    for c in range(15, target + 1, 5):
-        if _STOP_EVENT.is_set():
-            break
-        logger.info(f"Simulated connections: {c}/100")
-        time.sleep(0.1)
-    logger.info(f"Connection saturation reached: {target}/100 connections.")
-
-def stop_simulation():
-    _STOP_EVENT.set()
 
 def main():
-    parser = argparse.ArgumentParser(description="AutoSRE Traffic Simulator")
-    parser.add_argument("--target", type=int, default=98, help="Target connection count (default: 98)")
-    parser.add_argument("--host", type=str, default="localhost", help="PostgreSQL host")
-    parser.add_argument("--port", type=int, default=5432, help="PostgreSQL port")
-    parser.add_argument("--dbname", type=str, default="victim_db", help="Database name")
-    parser.add_argument("--user", type=str, default="autosre", help="Database user")
-    parser.add_argument("--password", type=str, default="autosre_password", help="Database password")
-    parser.add_argument("--duration", type=int, default=300, help="Hold duration in seconds")
-    parser.add_argument("--mock", action="store_true", help="Force mock traffic without connecting")
-
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default="http://localhost:8001")
+    parser.add_argument("--requests", type=int, default=150)
+    parser.add_argument("--concurrency", type=int, default=6)
+    parser.add_argument("--delay", type=float, default=0.05)
     args = parser.parse_args()
 
-    if args.mock:
-        simulate_mock_traffic(args.target, args.duration)
-    else:
-        simulate_with_psycopg2(
-            host=args.host,
-            port=args.port,
-            dbname=args.dbname,
-            user=args.user,
-            password=args.password,
-            target=args.target,
-            duration=args.duration
-        )
+    def show(path, status):
+        print(f"{status} {path}")
+
+    counts = run(args.base_url, args.requests, args.concurrency, args.delay, on_result=show)
+    print(f"done: {counts}")
+
 
 if __name__ == "__main__":
     main()

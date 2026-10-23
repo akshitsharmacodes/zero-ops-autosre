@@ -1,33 +1,42 @@
-import logging
 from django.http import JsonResponse
-from django.db import connection
-from .models import UserMetric
 
-logger = logging.getLogger(__name__)
+from .models import UserActivity
+from .pool import report_pool
 
-def health_check(request):
-    """Health check endpoint."""
+
+def health(request):
     return JsonResponse({"status": "ok", "service": "victim-service"})
 
+
+def top_pages(request):
+    """Most viewed pages, computed with raw SQL through the reporting pool."""
+    with report_pool.connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT page, COUNT(*) AS views FROM analytics_useractivity "
+            "GROUP BY page ORDER BY views DESC LIMIT 10"
+        )
+        rows = cursor.fetchall()
+    return JsonResponse({"pages": [{"page": r[0], "views": r[1]} for r in rows]})
+
+
 def metrics_summary(request):
-    """Metrics summary endpoint using safe ORM queries."""
-    count = UserMetric.objects.count()
+    """Headline numbers computed with the ORM."""
     return JsonResponse({
         "status": "success",
-        "total_metrics": count,
-        "sample": "ok"
+        "total_events": UserActivity.objects.count(),
+        "unique_users": UserActivity.objects.values("user_id").distinct().count(),
     })
 
+
 def user_activity_report(request):
-    """
-    User activity report endpoint.
-    BUG: Intentional connection/cursor leak!
-    Opens raw connection cursor without context manager or cursor.close(),
-    causing sessions to stay idle-in-transaction in PostgreSQL.
-    """
-    cursor = connection.cursor()
-    cursor.execute("SELECT 101 AS user_id, 'login_session' AS event, CURRENT_TIMESTAMP AS ts")
+    """Per-user activity summary using fast raw SQL."""
+    conn = report_pool.acquire()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id, COUNT(*) AS events, MAX(created_at) AS last_seen "
+        "FROM analytics_useractivity GROUP BY user_id ORDER BY events DESC LIMIT 50"
+    )
     rows = cursor.fetchall()
-    # Missing: cursor.close() or 'with connection.cursor() as cursor:'
-    data = [{"user_id": r[0], "event": r[1], "ts": str(r[2])} for r in rows]
+    data = [{"user_id": r[0], "events": r[1], "last_seen": str(r[2])} for r in rows]
     return JsonResponse({"status": "success", "count": len(data), "data": data})

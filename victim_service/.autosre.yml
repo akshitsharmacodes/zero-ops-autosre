@@ -1,0 +1,22 @@
+# Tells AutoSRE how to build and test this project. Any tech stack can provide this file;
+# without it AutoSRE falls back to auto-detection.
+name: victim-service
+language: python
+
+# Sandbox image: AutoSRE builds a cached image from this base + the dependency files,
+# so tests later run with NO network access.
+base_image: python:3.11-slim
+dependency_files:
+  - requirements.txt
+install: pip install --no-cache-dir -r requirements.txt
+
+# Commands run inside the sandbox (in this order). All must succeed.
+checks:
+  - python manage.py check
+test: python -m pytest
+# Used to prove a new regression test fails on the old code. {path} = test file.
+test_single: python -m pytest {path}
+
+# Where new regression tests may be created.
+tests_dir: tests
+test_file_glob: "tests/test_*.py"

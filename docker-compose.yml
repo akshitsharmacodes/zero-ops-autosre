@@ -1,75 +1,50 @@
-version: '3.8'
-
+# Demo environment: the monitored database and the victim application.
+#   docker compose up -d --build
+# AutoSRE's backend runs on the host (it needs the Docker engine for its sandbox).
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: autosre_postgres
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-victim_db}
-      POSTGRES_USER: ${POSTGRES_USER:-autosre}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autosre_password}
+      POSTGRES_DB: victim_db
+      POSTGRES_USER: pg_admin
+      POSTGRES_PASSWORD: ${PG_ADMIN_PASSWORD:-pg_admin_pw}
+    # 100 connections total: 1 for superusers, 2 reserved for AutoSRE,
+    # so the leaking app can grab at most 97 before it is refused.
     command: >
       postgres
       -c max_connections=100
-      -c shared_buffers=64MB
-      -c track_activities=on
-      -c track_counts=on
+      -c superuser_reserved_connections=1
+      -c reserved_connections=2
     ports:
       - "5432:5432"
     volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
       - postgres_data:/var/lib/postgresql/data
-    networks:
-      - autosre_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autosre -d victim_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U pg_admin -d victim_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   victim_service:
-    build:
-      context: ./victim_service
-      dockerfile: Dockerfile
+    build: ./victim_service
     container_name: autosre_victim_service
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
+      POSTGRES_PORT: "5432"
       POSTGRES_DB: victim_db
-      POSTGRES_USER: autosre
-      POSTGRES_PASSWORD: autosre_password
+      POSTGRES_USER: victim_app
+      POSTGRES_PASSWORD: victim_app_pw
+      VICTIM_LOG_DIR: /app/logs
     ports:
       - "8001:8001"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - autosre_net
-
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: autosre_backend
-    environment:
-      AUTOSRE_MODE: cached
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: victim_db
-      POSTGRES_USER: autosre
-      POSTGRES_PASSWORD: autosre_password
-    ports:
-      - "8000:8000"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      # Logs land in ./var/logs on the host so AutoSRE can read them.
+      - ./var/logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
-    networks:
-      - autosre_net
 
 volumes:
   postgres_data:
-
-networks:
-  autosre_net:
-    driver: bridge
