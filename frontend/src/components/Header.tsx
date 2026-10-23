@@ -1,4 +1,4 @@
-import React from "react"
+import React, { useEffect, useState } from "react"
 import { Activity, AlertTriangle, Bot, Box, Database, GitPullRequest, ShieldCheck, SlidersHorizontal } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -63,14 +63,31 @@ export const Header: React.FC<HeaderProps> = ({ system, backendError, incident, 
   const items = system ? statusItems(system) : []
   const degraded = items.some((i) => i.ok === false)
 
+  const signature = banners.join("\u0000")
+  const [open, setOpen] = useState(banners.length > 0)
+
+  useEffect(() => {
+    if (!signature) {
+      setOpen(false)
+      return
+    }
+    setOpen(true)
+    const timer = window.setTimeout(() => setOpen(false), 2000)
+    return () => window.clearTimeout(timer)
+  }, [signature])
+
   return (
     <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
-      {banners.map((b) => (
-        <div key={b} role="status" className="flex items-start gap-2 border-b border-warning/20 bg-warning/[0.07] px-4 py-1.5 text-xs text-warning sm:px-6">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span className="leading-snug">{b}</span>
+      <div className={`grid transition-[grid-template-rows,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+        <div className="overflow-hidden">
+          {banners.map((b) => (
+            <div key={b} role="status" className="flex items-start gap-2 border-b border-warning/20 bg-warning/[0.07] px-4 py-1.5 text-xs text-warning sm:px-6">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span className="leading-snug">{b}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      </div>
       <div className="flex h-14 items-center justify-between gap-3 px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
