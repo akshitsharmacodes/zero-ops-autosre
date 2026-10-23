@@ -35,7 +35,7 @@ class IncidentSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Incident
         fields = [
-            "id", "status", "mode", "source", "alert", "attempt", "max_attempts", "branch",
+            "id", "status", "mode", "approval_mode", "pending_approval", "source", "alert", "attempt", "max_attempts", "branch",
             "pull_request", "sandbox_isolated", "escalation_reason", "created_at", "mitigated_at",
             "pr_opened_at", "ready_at", "finished_at", "mttr_seconds", "time_to_mitigate_seconds",
         ]
@@ -47,6 +47,7 @@ class IncidentDetailSerializer(IncidentSummarySerializer):
     class Meta(IncidentSummarySerializer.Meta):
         fields = IncidentSummarySerializer.Meta.fields + [
             "telemetry", "mitigation", "diagnosis", "suspect", "project_profile", "fix", "llm", "timeline",
+            "related_incidents", "ai_card",
         ]
 
     def to_representation(self, instance):

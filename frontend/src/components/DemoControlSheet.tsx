@@ -77,6 +77,13 @@ export const DemoControlSheet: React.FC<Props> = ({ open, onClose, system, onInc
               <option value="live">live — real LLM</option>
             </select>
           </label>
+          <label className="block text-[11px] text-zinc-400">Human oversight (applies to new incidents)
+            <select className="mt-1 w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200"
+                    value={config?.approval_mode} onChange={(e) => set({ approval_mode: e.target.value as "autonomous" | "review" })}>
+              <option value="autonomous">autonomous - act, then report (every decision recorded)</option>
+              <option value="review">review - ask a human before ending sessions and before changing code</option>
+            </select>
+          </label>
           <label className="block text-[11px] text-zinc-400">LLM provider (live mode)
             <select className="mt-1 w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200"
                     value={config?.llm_provider} onChange={(e) => set({ llm_provider: e.target.value })}>

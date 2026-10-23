@@ -9,6 +9,7 @@ export type IncidentStatus =
   | "TESTING_IN_SANDBOX"
   | "PR_CREATED"
   | "UPDATING_PR"
+  | "AWAITING_APPROVAL"
   | "READY_TO_MERGE"
   | "RESOLVED"
   | "ESCALATED"
@@ -79,10 +80,40 @@ export interface FixInfo {
   brain?: { mode: string; provider: string; model: string; fallback_used: boolean; fallback_reason: string }
 }
 
+export interface PendingApproval {
+  gate?: "mitigation" | "fix"
+  title?: string
+  details?: Record<string, unknown>
+  requested_at?: string
+  timeout_seconds?: number
+  decision?: "approve" | "deny" | null
+}
+
+export interface AiCard {
+  decision_maker: { mode: string; provider: string; model: string; fallback_used: boolean; fallback_reason: string }
+  human_oversight: { approval_mode: string; decisions: { gate: string; approved: boolean; by: string }[]; merge: string }
+  data_shared: { sent_to: string; evidence_sources: string[]; secrets_redacted: number; personal_data_redacted: number;
+    injection_lines_neutralized: number; never_sent: string }
+  verification: { sandbox_isolated: boolean; regression_test_fails_on_old_code: boolean | null; attempts: number | null }
+  usage: { llm_calls: number; prompt_tokens: number; completion_tokens: number; agent_steps: number; elapsed_seconds: number }
+  limitations: string[]
+}
+
+export interface RelatedIncident {
+  id: string
+  status: IncidentStatus
+  created_at: string
+  match: string
+  pr_url: string | null
+  fix_summary: string
+}
+
 export interface IncidentSummary {
   id: string
   status: IncidentStatus
   mode: RunMode
+  approval_mode: "autonomous" | "review"
+  pending_approval: PendingApproval
   source: string
   alert: Record<string, unknown>
   attempt: number
@@ -109,6 +140,8 @@ export interface Incident extends IncidentSummary {
   fix: FixInfo
   llm: { mode?: string; provider?: string; model?: string; fallback_used?: boolean; fallback_reason?: string }
   timeline: TimelineEntry[]
+  related_incidents: RelatedIncident[]
+  ai_card: AiCard | Record<string, never>
 }
 
 export interface AgentStep {
@@ -186,6 +219,7 @@ export interface SystemConfig {
   llm_provider: string
   alert_threshold: number
   monitor_enabled: boolean
+  approval_mode: "autonomous" | "review"
 }
 
 export interface TrafficStatus {

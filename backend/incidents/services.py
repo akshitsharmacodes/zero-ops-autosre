@@ -62,6 +62,7 @@ def ingest_alert(payload: dict, source: str = "webhook", start: bool = True) -> 
 
         incident = Incident.objects.create(
             dedupe_key=key, alert=alert, source=source, mode=config.mode, max_attempts=config.max_attempts,
+            approval_mode=config.approval_mode,
         )
         value = f"{alert['value']}/{alert['max']}" if alert["max"] else str(alert["value"])
         TimelineEvent.objects.create(

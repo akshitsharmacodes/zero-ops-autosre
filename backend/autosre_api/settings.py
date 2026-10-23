@@ -120,6 +120,8 @@ AUTOSRE = {
     "PR_MAX_ROUNDS": env.int("AUTOSRE_PR_MAX_ROUNDS", default=5),
     "PR_POLL_SECONDS": env.float("AUTOSRE_PR_POLL_SECONDS", default=10),
     "PR_WATCH_TIMEOUT_SECONDS": env.int("AUTOSRE_PR_WATCH_TIMEOUT_SECONDS", default=1800),
+    # Review mode: how long to wait for a human decision before escalating / skipping
+    "APPROVAL_TIMEOUT_SECONDS": env.int("AUTOSRE_APPROVAL_TIMEOUT_SECONDS", default=900),
     # Alert monitor
     "MONITOR_ENABLED": env.bool("AUTOSRE_MONITOR_ENABLED", default=True),
     "MONITOR_INTERVAL_SECONDS": env.float("AUTOSRE_MONITOR_INTERVAL_SECONDS", default=2),

@@ -24,9 +24,15 @@ class BrainInfo:
     fallback_used: bool = False
     fallback_reason: str = ""
     notes: list[str] = field(default_factory=list)
+    usage: dict = field(default_factory=dict)  # calls, prompt/completion tokens (transparency)
 
     def as_dict(self) -> dict:
         return dict(self.__dict__)
+
+
+def usage_of(client) -> dict:
+    usage = getattr(client, "usage", None)
+    return dict(usage) if isinstance(usage, dict) else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
 
 
 def run_coding_task(*, mode: str, live_client_factory: Callable[[], ChatClient],
@@ -54,7 +60,9 @@ def run_coding_task(*, mode: str, live_client_factory: Callable[[], ChatClient],
 
     toolbox = make_toolbox()
     try:
-        return CodingAgent(client, toolbox, recorder, max_steps).run(system_prompt, task_prompt), info
+        result = CodingAgent(client, toolbox, recorder, max_steps).run(system_prompt, task_prompt)
+        info.usage = usage_of(client)
+        return result, info
     except LLMUnavailable as exc:
         if recording is None or isinstance(client, ScriptedClient):
             return AgentResult(success=False, reason=f"LLM became unavailable: {exc}"), info
@@ -67,6 +75,8 @@ def run_coding_task(*, mode: str, live_client_factory: Callable[[], ChatClient],
     restart()
     toolbox = make_toolbox()
     try:
-        return CodingAgent(recording, toolbox, recorder, max_steps).run(system_prompt, task_prompt), info
+        result = CodingAgent(recording, toolbox, recorder, max_steps).run(system_prompt, task_prompt)
+        info.usage = usage_of(client) if client is not recording else usage_of(recording)
+        return result, info
     finally:
         toolbox.cleanup()

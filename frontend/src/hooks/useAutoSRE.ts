@@ -4,7 +4,7 @@ import { api, subscribeTimeline } from "@/lib/api"
 import type { IncidentStatus, SystemConfig, TimelineEntry } from "@/types/api"
 
 const ACTIVE: IncidentStatus[] = [
-  "ALERT_RECEIVED", "MITIGATING", "DIAGNOSING", "CORRELATING", "PATCHING", "TESTING_IN_SANDBOX", "PR_CREATED", "UPDATING_PR",
+  "ALERT_RECEIVED", "MITIGATING", "DIAGNOSING", "CORRELATING", "PATCHING", "TESTING_IN_SANDBOX", "PR_CREATED", "UPDATING_PR", "AWAITING_APPROVAL",
 ]
 export const isActive = (s?: IncidentStatus) => !!s && ACTIVE.includes(s)
 
@@ -56,6 +56,12 @@ export const useUpdateConfig = () =>
 export const useTriggerDemo = () => useInvalidatingMutation(() => api.triggerDemo(), [["traffic"]])
 export const useReplay = () => useInvalidatingMutation(() => api.replay(), [["incidents"]])
 export const useTeammatePush = () => useInvalidatingMutation(() => api.teammatePush(), [["incidents"]])
+export const useDecide = () =>
+  useInvalidatingMutation(
+    (a: { id: string; gate: string; decision: "approve" | "deny"; by?: string; note?: string }) =>
+      api.decide(a.id, { gate: a.gate, decision: a.decision, by: a.by, note: a.note }),
+    [["incident"], ["incidents"]],
+  )
 export const useMerge = () => useInvalidatingMutation((id: string) => api.merge(id), [["incidents"], ["incident"]])
 export const useReset = () =>
   useInvalidatingMutation(

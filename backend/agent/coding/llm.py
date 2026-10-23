@@ -84,6 +84,7 @@ class OpenAICompatClient:
         import time as _time
 
         self._sleep = sleep or _time.sleep
+        self.usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
 
     @property
     def prompt_budget(self) -> int | None:
@@ -124,8 +125,11 @@ class OpenAICompatClient:
             except openai.APIError as exc:
                 raise LLMUnavailable(f"{self.provider} API error: {exc}") from exc
         usage = getattr(resp, "usage", None)
+        self.usage["calls"] += 1
         if usage and getattr(usage, "total_tokens", None):
             self._limiter.adjust_last(int(usage.total_tokens))
+            self.usage["prompt_tokens"] += int(getattr(usage, "prompt_tokens", 0) or 0)
+            self.usage["completion_tokens"] += int(getattr(usage, "completion_tokens", 0) or 0)
         msg = resp.choices[0].message
         calls = []
         for tc in msg.tool_calls or []:
@@ -184,6 +188,15 @@ class FallbackChatClient:
     def prompt_budget(self) -> int | None:
         return self.current.prompt_budget
 
+    @property
+    def usage(self) -> dict:
+        total = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+        for c in self._clients:
+            for k in total:
+                total[k] += getattr(c, "usage", {}).get(k, 0)
+        total["models"] = [c.model for c in self._clients[: self._i + 1]]
+        return total
+
     def complete(self, messages: list[dict], tools: list[dict]) -> AssistantTurn:
         while True:
             try:
@@ -226,6 +239,7 @@ class ScriptedClient:
     prompt_budget = None
 
     def __init__(self, steps: list[ScriptStep], name: str = "recording"):
+        self.usage = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
         self.steps = list(steps)
         self.model = f"scripted:{name}"
         self._i = 0
@@ -235,6 +249,7 @@ class ScriptedClient:
             return AssistantTurn(content="(recording finished)", tool_calls=[])
         thought, name, args = self.steps[self._i]
         self._i += 1
+        self.usage["calls"] += 1
         if callable(args):
             last_tool = next((m["content"] for m in reversed(messages) if m.get("role") == "tool"), "")
             args = args(last_tool)

@@ -33,6 +33,8 @@ from telemetry import DatabaseAdapter, TelemetryUnavailable
 from workspace.gitcmd import GitError, git
 from workspace.workspace import Workspace
 
+from .approvals import ApprovalGate, ApprovalRequest, AutoApproval
+from .memory import IncidentMemory, NoMemory, incident_signature
 from .coding.briefing import CodeBriefing
 from .coding.llm import ChatClient
 from .coding.prompts import TaskBrief, ci_brief, conflict_brief, fix_brief, system_prompt
@@ -56,6 +58,7 @@ class PipelineState(TypedDict, total=False):
     suspect: dict
     fix: dict
     pr: dict
+    related: list
     error: str | None
     outcome: str
 
@@ -94,6 +97,9 @@ class AgentDeps:
     sleep: Callable[[float], None] = time.sleep
     # Prompt-injection screen for untrusted evidence (heuristics; wiring adds Prompt Guard in live mode)
     injection_screen: InjectionScreen = field(default_factory=lambda: InjectionScreen([HeuristicInjectionDetector()]))
+    # Review mode asks a human before impactful steps; autonomous approves immediately (still recorded)
+    approvals: ApprovalGate = field(default_factory=AutoApproval)
+    memory: IncidentMemory = field(default_factory=NoMemory)
     ctx: dict = field(default_factory=dict)  # runtime objects (workspace, policy) shared between nodes
 
 
@@ -134,6 +140,14 @@ def node_mitigate(state: PipelineState, deps: AgentDeps) -> dict:
         if not stuck:
             rec.event("MITIGATE", f"No stuck '{cfg.app_prefix}' sessions to end; skipping stop-the-bleeding.")
             return {"mitigation": {"terminated": 0, "app_prefix": cfg.app_prefix}}
+        decision = _ask(deps, ApprovalRequest(
+            gate="mitigation",
+            title=f"End {len(stuck)} stuck '{cfg.app_prefix}' database session(s) to restore service?",
+            details={"sessions": len(stuck), "app_prefix": cfg.app_prefix,
+                     "oldest_idle_seconds": max(s.state_age_seconds for s in stuck)}))
+        if not decision.approved:
+            rec.event("MITIGATE", f"Stop-the-bleeding skipped: {decision.by} denied it. Continuing to the root-cause fix.")
+            return {"mitigation": {"terminated": 0, "app_prefix": cfg.app_prefix, "skipped": "denied by human"}}
         result = stop_the_bleeding(deps.adapter, stuck, cfg.app_prefix, cfg.idle_min_seconds)
     except TelemetryUnavailable as exc:  # mitigation failing must not stop the real fix
         rec.event("MITIGATE", f"Stop-the-bleeding could not run ({exc}); continuing to the root-cause fix.")
@@ -168,7 +182,16 @@ def node_correlate(state: PipelineState, deps: AgentDeps) -> dict:
                           + (f" in {loc['function']}()" if loc.get("function") else ""))
     for reason in suspect["evidence"][:3]:
         rec.event("CORR", f"Evidence: {reason}")
-    return {"suspect": suspect}
+
+    signature = incident_signature(state["diagnosis"], suspect)
+    related = deps.memory.similar(state["incident_id"], signature)
+    deps.memory.remember(state["incident_id"], signature)
+    rec.update(related_incidents=related)
+    for past in related:
+        outcome = f"fixed via {past['pr_url']}" if past.get("pr_url") else past["status"].lower()
+        rec.event("CORR", f"Seen before ({past['match']}): {past['id']} - {outcome}. "
+                          "A repeat suggests the earlier fix didn't hold or the pattern was reintroduced.")
+    return {"suspect": suspect, "related": related}
 
 
 def node_fix(state: PipelineState, deps: AgentDeps) -> dict:
@@ -197,7 +220,17 @@ def node_fix(state: PipelineState, deps: AgentDeps) -> dict:
         rec.event("TEST", "WARNING: Docker is unavailable - sandbox runs are NOT ISOLATED (subprocess fallback).")
 
     briefing = CodeBriefing(ws).render(suspect.get("location", {}).get("file") or suspect["primary_file"])
-    task = _prepare_brief(fix_brief(state["incident_id"], state["diagnosis"], suspect, briefing), deps, attempt=0)
+    task = _prepare_brief(fix_brief(state["incident_id"], state["diagnosis"], suspect, briefing, state.get("related")),
+                          deps, attempt=0)
+    decision = _ask(deps, ApprovalRequest(
+        gate="fix",
+        title=f"Let the coding agent change {', '.join(policy.allowed_files)} on branch {branch}?",
+        details={"suspect_commit": suspect["commit"]["short_sha"], "files": policy.allowed_files,
+                 "max_attempts": cfg.max_attempts, "branch": branch}))
+    if not decision.approved:
+        raise Escalate(f"{decision.by} chose to handle the code fix manually"
+                       + (" (no answer in time)" if decision.timed_out else "")
+                       + (f": {decision.note}" if decision.note else ""))
     rec.event("PATCH", f"Starting the coding agent ({deps.mode} mode, up to {cfg.max_attempts} test attempts).")
 
     def make_toolbox():
@@ -418,13 +451,38 @@ def node_escalate(state: PipelineState, deps: AgentDeps) -> dict:
 
 
 # --- helpers -----------------------------------------------------------------------------------
+def _ask(deps: AgentDeps, req: ApprovalRequest):
+    """Ask the approval gate; every decision is recorded, also in autonomous mode."""
+    rec = deps.recorder
+    if deps.approvals.mode == "review":
+        rec.event("ALERT", f"Waiting for human approval: {req.title}")
+    decision = deps.approvals.request(req)
+    deps.ctx.setdefault("approvals", []).append(
+        {"gate": req.gate, "approved": decision.approved, "by": decision.by, "mode": deps.approvals.mode})
+    rec.audit("approval", {"gate": req.gate, "title": req.title, "details": req.details, "mode": deps.approvals.mode,
+                           "approved": decision.approved, "by": decision.by, "note": decision.note,
+                           "timed_out": decision.timed_out})
+    if deps.approvals.mode == "review":
+        verdict = "APPROVED" if decision.approved else "DENIED"
+        rec.event("ALERT", f"{verdict} by {decision.by}: {req.title}" + (f" ({decision.note})" if decision.note else ""))
+    return decision
+
+
 def _prepare_brief(brief: TaskBrief, deps: AgentDeps, attempt: int) -> str:
     """Scrub secrets + screen untrusted evidence for prompt injection; record the verdict."""
     rec = deps.recorder
     brief.prepare(deps.config.secret_values, deps.injection_screen)
     if brief.redactions:
         rec.event("GUARD", f"Redacted {brief.redactions} secret-like value(s) before sending context to the LLM.")
+    if brief.pii_redactions:
+        rec.event("GUARD", f"Redacted {brief.pii_redactions} personal-data value(s) (emails, IPs, card-like numbers) before sending context to the LLM.")
     flagged = brief.injection_findings
+    shared = deps.ctx.setdefault("data_shared", {"sources": set(), "secrets_redacted": 0, "pii_redacted": 0,
+                                                 "injection_lines_neutralized": 0})
+    shared["sources"].update(src for src, text in brief.evidence.items() if text)
+    shared["secrets_redacted"] += brief.redactions
+    shared["pii_redacted"] += brief.pii_redactions
+    shared["injection_lines_neutralized"] += sum(s.neutralized for s in flagged)
     detectors = ", ".join(d.name for d in deps.injection_screen.detectors)
     if flagged:
         removed = sum(s.neutralized for s in flagged)
@@ -452,13 +510,62 @@ def _postmortem(state: PipelineState, deps: AgentDeps, escalated: str | None = N
         diff = ws.diff(ws.base_sha)
     elif escalated:
         diff = deps.ctx.get("attempted_diff", "")
+    card = ai_card(state, deps)
+    deps.recorder.update(ai_card=card)
     return render_postmortem(
         incident_id=state["incident_id"], alert=state.get("alert", {}), diagnosis=state.get("diagnosis", {}),
         mitigation=mitigation, suspect=state.get("suspect", {}), fix=fix, diff=diff,
         sandbox=fix.get("sandbox"), guardrails=fix.get("guardrails", []), timeline=deps.recorder.timeline(),
         time_to_mitigate=mitigation.get("seconds_after_alert"), time_to_pr=None if escalated else _secs_since(deps),
         sandbox_isolated=getattr(deps.sandbox, "isolated", None), escalated_reason=escalated,
+        ai_card=card, related=state.get("related") or [],
     )
+
+
+def ai_card(state: PipelineState, deps: AgentDeps) -> dict:
+    """Responsible-AI card: who/what decided, what data left the machine, human oversight, cost, limits."""
+    fix = state.get("fix", {})
+    brain = fix.get("brain") or {}
+    usage = brain.get("usage") or {}
+    shared = deps.ctx.get("data_shared") or {}
+    sent_to = ("nobody (cached mode: recorded decisions, no external AI call)" if brain.get("provider") in (None, "", "cached")
+               else f"{brain.get('provider')} ({', '.join(usage.get('models') or [brain.get('model', '?')])})")
+    return {
+        "decision_maker": {
+            "mode": deps.mode, "provider": brain.get("provider") or "n/a", "model": brain.get("model") or "n/a",
+            "fallback_used": bool(brain.get("fallback_used")), "fallback_reason": brain.get("fallback_reason", ""),
+        },
+        "human_oversight": {
+            "approval_mode": deps.approvals.mode,
+            "decisions": deps.ctx.get("approvals", []),
+            "merge": "only a human can merge; AutoSRE never merges or pushes to main",
+        },
+        "data_shared": {
+            "sent_to": sent_to,
+            "evidence_sources": sorted(shared.get("sources") or []),
+            "secrets_redacted": shared.get("secrets_redacted", 0),
+            "personal_data_redacted": shared.get("pii_redacted", 0),
+            "injection_lines_neutralized": shared.get("injection_lines_neutralized", 0),
+            "never_sent": "database rows, credentials, the GitHub App private key",
+        },
+        "verification": {
+            "sandbox_isolated": bool(getattr(deps.sandbox, "isolated", False)),
+            "regression_test_fails_on_old_code": (fix.get("sandbox") or {}).get("reproduced"),
+            "attempts": fix.get("attempts"),
+        },
+        "usage": {
+            "llm_calls": usage.get("calls", 0),
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "agent_steps": fix.get("steps", 0),
+            "elapsed_seconds": round(_secs_since(deps)),
+        },
+        "limitations": [
+            "AI-written code is only as safe as the tests that check it; review the diff before merging.",
+            "Correlation is evidence-based scoring, not proof; check the suspect commit.",
+            "Heuristic and classifier prompt-injection screening reduces but cannot eliminate manipulation risk.",
+        ],
+    }
 
 
 def save_local_bundle(directory: Path, incident_id: str, diff: str, report: str) -> str:

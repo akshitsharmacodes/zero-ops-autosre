@@ -48,6 +48,23 @@ def scrub_secrets(text: str, extra_values: list[str] | None = None) -> tuple[str
     return text, count
 
 
+# --- personal data (AI ethics: minimise what leaves the machine) -----------------------------
+PII_PATTERNS = [
+    ("email address", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "[EMAIL]"),
+    ("IP address", re.compile(r"\b(?!127\.0\.0\.1\b)(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b"), "[IP]"),
+    ("card-like number", re.compile(r"\b(?:\d[ -]?){13,16}\b"), "[NUMBER]"),
+]
+
+
+def scrub_pii(text: str) -> tuple[str, int]:
+    """Replace personal data (emails, IPs, card-like numbers) before text is sent to an LLM."""
+    count = 0
+    for _, pattern, placeholder in PII_PATTERNS:
+        text, n = pattern.subn(placeholder, text)
+        count += n
+    return text, count
+
+
 def find_secrets(text: str) -> list[str]:
     return [label for label, pattern in SECRET_PATTERNS if pattern.search(text)]
 

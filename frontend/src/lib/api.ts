@@ -71,6 +71,8 @@ export const api = {
   traffic: () => request<TrafficStatus>("/demo/traffic"),
   replay: () => post<{ incident: IncidentSummary }>("/demo/replay"),
   teammatePush: () => post<{ sha: string }>("/demo/teammate-push"),
+  decide: (id: string, body: { gate: string; decision: "approve" | "deny"; by?: string; note?: string }) =>
+    post<{ recorded: boolean }>(`/incidents/${id}/decision`, body),
   merge: (id: string) => post<{ merged: boolean; sha: string }>(`/incidents/${id}/merge`),
   reset: (opts: { clear_incidents?: boolean; reseed_repo?: boolean }) => post<Record<string, unknown>>("/demo/reset", opts),
   githubStatus: () => request<GitHubStatus>("/github/status"),

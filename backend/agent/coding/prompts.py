@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from guardrails.injection import InjectionScreen, ScreenResult, fence
-from guardrails.rules import scrub_secrets
+from guardrails.rules import scrub_pii, scrub_secrets
 
 SYSTEM_PROMPT = """You are AutoSRE's coding agent: a careful senior engineer fixing a production incident.
 You work ONLY through the provided tools, inside a temporary copy of the repository on a fix branch.
@@ -57,14 +57,17 @@ class TaskBrief:
     job: str  # trusted
     evidence: dict[str, str] = field(default_factory=dict)  # untrusted: source -> text
     redactions: int = 0
+    pii_redactions: int = 0
     screens: list[ScreenResult] = field(default_factory=list)
 
     def prepare(self, secret_values: list[str], screen: InjectionScreen | None) -> "TaskBrief":
-        """Scrub secrets, then screen for prompt injection (in that order, so secrets never reach a classifier)."""
+        """Scrub secrets and personal data, then screen for prompt injection (so neither reaches a classifier)."""
         cleaned = {}
         for source, text in self.evidence.items():
             text, n = scrub_secrets(text, secret_values)
             self.redactions += n
+            text, n = scrub_pii(text)
+            self.pii_redactions += n
             if screen is not None:
                 result = screen.screen(source, text)
                 self.screens.append(result)
@@ -92,7 +95,8 @@ def system_prompt(profile, policy, max_attempts: int) -> str:
     )
 
 
-def fix_brief(incident_id: str, diagnosis: dict, suspect: dict, files: str = "") -> TaskBrief:
+def fix_brief(incident_id: str, diagnosis: dict, suspect: dict, files: str = "",
+              related: list[dict] | None = None) -> TaskBrief:
     loc = suspect.get("location", {})
     commit = suspect.get("commit", {})
     header = (
@@ -110,6 +114,8 @@ def fix_brief(incident_id: str, diagnosis: dict, suspect: dict, files: str = "")
         "application-log-samples": "\n".join(logs.get("samples", [])[:3]),
         "source-files": files or _clip(loc.get("snippet", ""), 3000),
         "suspect-commit-diff": _clip(suspect.get("commit_diff", ""), 4000),
+        "past-incidents": "\n".join(
+            f"- {r['id']} ({r['match']}, {r['status']}): {_clip(r.get('fix_summary', ''), 300)}" for r in related or []),
     }
     return TaskBrief(header=header, job=FIX_JOB, evidence=evidence)
 

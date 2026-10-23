@@ -15,6 +15,7 @@ urlpatterns = [
     path("incidents/<str:incident_id>/sandbox-runs", views.get_sandbox_runs, name="incident-sandbox-runs"),
     path("incidents/<str:incident_id>/audit", views.export_audit, name="incident-audit"),
     path("incidents/<str:incident_id>/merge", demo_views.human_merge, name="incident-merge"),
+    path("incidents/<str:incident_id>/decision", views.decide, name="incident-decision"),
     path("guardrails", views.get_guardrails, name="guardrails"),
     path("telemetry/connections", views.telemetry_current, name="telemetry-current"),
     path("telemetry/connections/history", views.telemetry_history, name="telemetry-history"),

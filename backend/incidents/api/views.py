@@ -265,6 +265,11 @@ def config_view(request):
                 config.alert_threshold = value
             except (TypeError, ValueError):
                 errors.append("alert_threshold must be between 0.5 and 1.0")
+        if "approval_mode" in body:
+            if body["approval_mode"] in ("autonomous", "review"):
+                config.approval_mode = body["approval_mode"]
+            else:
+                errors.append("approval_mode must be 'autonomous' or 'review'")
         if "monitor_enabled" in body:
             config.monitor_enabled = bool(body["monitor_enabled"])
         if errors:
@@ -272,4 +277,23 @@ def config_view(request):
         config.save()
         AuditLog.objects.create(kind="config", payload={k: body[k] for k in body})
     return ok({"mode": config.mode, "max_attempts": config.max_attempts, "llm_provider": config.llm_provider,
-               "alert_threshold": config.alert_threshold, "monitor_enabled": config.monitor_enabled})
+               "alert_threshold": config.alert_threshold, "monitor_enabled": config.monitor_enabled,
+               "approval_mode": config.approval_mode})
+
+
+@api_view(["POST"])
+def decide(request, incident_id):
+    """Review mode: Approve / Deny the incident's pending request. Body: {gate, decision, by?, note?}."""
+    from ..approvals import record_decision
+
+    inc, err = _incident_or_404(incident_id)
+    if err:
+        return err
+    body = request.data or {}
+    try:
+        record_decision(inc, str(body.get("gate", "")), str(body.get("decision", "")),
+                        str(body.get("by", "")), str(body.get("note", "")))
+    except ValueError as exc:
+        return fail("INVALID_DECISION", str(exc), 409)
+    AuditLog.objects.create(incident=inc, kind="approval_click", payload={k: body.get(k) for k in ("gate", "decision", "by", "note")})
+    return ok({"recorded": True})

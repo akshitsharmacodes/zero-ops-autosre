@@ -19,7 +19,7 @@ const STEPS: { id: string; label: string; hint: string; icon: React.ElementType;
 
 function lastActiveIndex(incident: Incident): number {
   // For escalations, find the last state reached from the timeline.
-  const states = incident.timeline.map((e) => e.state).filter((s) => s !== "ESCALATED")
+  const states = incident.timeline.map((e) => e.state).filter((s) => s !== "ESCALATED" && s !== "AWAITING_APPROVAL")
   const last = states[states.length - 1] || "ALERT_RECEIVED"
   return STEPS.findIndex((s) => s.states.includes(last))
 }
@@ -27,7 +27,7 @@ function lastActiveIndex(incident: Incident): number {
 function stepState(idx: number, incident: Incident): StepState {
   const status = incident.status
   // PATCHING <-> TESTING alternate during retries; treat both as the "fix" phase.
-  const current = status === "ESCALATED" ? lastActiveIndex(incident) : STEPS.findIndex((s) => s.states.includes(status))
+  const current = status === "ESCALATED" || status === "AWAITING_APPROVAL" ? lastActiveIndex(incident) : STEPS.findIndex((s) => s.states.includes(status))
   if (status === "ESCALATED") return idx < current ? "done" : idx === current ? "failed" : "pending"
   if (status === "RESOLVED") return "done"
   if (status === "READY_TO_MERGE") return idx < 7 ? "done" : "waiting"

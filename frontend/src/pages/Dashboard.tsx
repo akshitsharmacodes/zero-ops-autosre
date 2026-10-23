@@ -11,6 +11,7 @@ import { PrCard } from "@/components/PrCard"
 import { DetailTabs } from "@/components/DetailTabs"
 import { GuardrailsPanel } from "@/components/GuardrailsPanel"
 import { DemoControlSheet } from "@/components/DemoControlSheet"
+import { ApprovalCard } from "@/components/ApprovalCard"
 import {
   isActive, useConfig, useGuardrails, useIncident, useIncidents, useSystem, useTelemetry, useTelemetryHistory, useTimeline,
 } from "@/hooks/useAutoSRE"
@@ -69,6 +70,7 @@ export const Dashboard: React.FC = () => {
                  onSelect={(id) => { pinned.current = true; setSelectedId(id) }} />
         <main className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-6">
           <PipelineStepper incident={incident} />
+          <ApprovalCard incident={incident} />
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <LiveTerminal timeline={timeline} />
             <ConnectionGraph history={history} current={telemetry.data}

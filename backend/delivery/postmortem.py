@@ -24,7 +24,8 @@ def _duration(seconds) -> str:
 def render_postmortem(*, incident_id: str, alert: dict, diagnosis: dict, mitigation: dict, suspect: dict,
                       fix: dict, diff: str, sandbox: dict | None, guardrails: list[dict], timeline: list[dict],
                       time_to_mitigate: float | None, time_to_pr: float | None, sandbox_isolated: bool | None,
-                      escalated_reason: str | None = None) -> str:
+                      escalated_reason: str | None = None, ai_card: dict | None = None,
+                      related: list[dict] | None = None) -> str:
     snap = diagnosis.get("snapshot", {})
     commit = suspect.get("commit", {})
     loc = suspect.get("location", {})
@@ -106,6 +107,12 @@ def render_postmortem(*, incident_id: str, alert: dict, diagnosis: dict, mitigat
         lines += ["", "| Guardrail | Result | Details |", "|---|---|---|"]
         lines += [f"| {g['name']} | {'✅' if g['passed'] else '❌'} | {g['details']} |" for g in guardrails]
 
+    if related:
+        lines += ["", "### Seen before"]
+        lines += [f"- {r['id']} ({r['match']}, {r['status']})" + (f": {r['pr_url']}" if r.get("pr_url") else "")
+                  for r in related]
+        lines.append("- A repeat means the earlier fix didn't hold or the pattern was reintroduced; consider a lint rule.")
+
     lines += ["", "### Timeline (UTC)"]
     lines += [f"- `{_fmt_ts(e.get('ts'))}` **{e.get('tag')}** {e.get('message')}" for e in timeline[-40:]]
 
@@ -116,4 +123,31 @@ def render_postmortem(*, incident_id: str, alert: dict, diagnosis: dict, mitigat
         "- Set PostgreSQL `idle_in_transaction_session_timeout` so leaked sessions are reclaimed automatically.",
         "- Keep the regression test added in this PR; alert on pool `in_use` growth before the database saturates.",
     ]
+    if ai_card:
+        lines += render_ai_card(ai_card)
     return "\n".join(lines) + "\n"
+
+
+def render_ai_card(card: dict) -> list[str]:
+    """Responsible-AI card: plain statements a reviewer can check against the audit log."""
+    dm, ho, data = card["decision_maker"], card["human_oversight"], card["data_shared"]
+    ver, use = card["verification"], card["usage"]
+    decisions = ", ".join(f"{d['gate']}: {'approved' if d['approved'] else 'denied'} by {d['by']}"
+                          for d in ho.get("decisions", [])) or "none required"
+    lines = [
+        "", "### Responsible-AI card",
+        f"- **Who decided the code change:** {dm['mode']} mode - {dm['provider']} / `{dm['model']}`"
+        + (f" (fallback used: {dm['fallback_reason']})" if dm.get("fallback_used") else ""),
+        f"- **Human oversight:** {ho['approval_mode']} mode; decisions: {decisions}; {ho['merge']}.",
+        f"- **Data sent to an AI provider:** {data['sent_to']}. Evidence types: "
+        f"{', '.join(data['evidence_sources']) or 'none'}. Redacted before sending: {data['secrets_redacted']} secret(s), "
+        f"{data['personal_data_redacted']} personal-data value(s); {data['injection_lines_neutralized']} "
+        f"prompt-injection line(s) neutralized. Never sent: {data['never_sent']}.",
+        f"- **Verification:** sandbox {'isolated' if ver['sandbox_isolated'] else 'NOT isolated'}; regression test fails "
+        f"on old code: {ver['regression_test_fails_on_old_code']}; attempts: {ver['attempts']}.",
+        f"- **Resources:** {use['llm_calls']} LLM call(s), {use['prompt_tokens']} prompt + {use['completion_tokens']} "
+        f"completion tokens, {use['agent_steps']} agent step(s), {use['elapsed_seconds']}s elapsed.",
+        "- **Known limitations:**",
+    ]
+    lines += [f"  - {limit}" for limit in card.get("limitations", [])]
+    return lines

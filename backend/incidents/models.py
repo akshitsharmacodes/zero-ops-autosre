@@ -26,6 +26,7 @@ class IncidentStatus(models.TextChoices):
     TESTING_IN_SANDBOX = "TESTING_IN_SANDBOX"
     PR_CREATED = "PR_CREATED"
     UPDATING_PR = "UPDATING_PR"  # outer loop: resolving conflicts / fixing CI
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"  # review mode: waiting for a human decision
     READY_TO_MERGE = "READY_TO_MERGE"  # agent is done; a human must merge
     RESOLVED = "RESOLVED"  # the fix was merged by a human
     ESCALATED = "ESCALATED"  # handed to a human with all evidence
@@ -41,6 +42,7 @@ ACTIVE_STATUSES = {
     IncidentStatus.TESTING_IN_SANDBOX,
     IncidentStatus.PR_CREATED,
     IncidentStatus.UPDATING_PR,
+    IncidentStatus.AWAITING_APPROVAL,
 }
 FINAL_STATUSES = {IncidentStatus.RESOLVED, IncidentStatus.ESCALATED}
 
@@ -74,9 +76,14 @@ class Incident(models.Model):
     pull_request = models.JSONField(default=dict)  # provider, number, url, state, mergeable, checks, rounds
     postmortem = models.TextField(blank=True, default="")
 
+    approval_mode = models.CharField(max_length=16, default="autonomous")  # autonomous | review
+    pending_approval = models.JSONField(default=dict, blank=True)  # {gate, title, details, requested_at} while waiting
     llm = models.JSONField(default=dict)  # provider, model, fallback_used
     sandbox_isolated = models.BooleanField(null=True)
     escalation_reason = models.TextField(blank=True, default="")
+    signature = models.JSONField(default=dict, blank=True)  # incident memory: query hash + file + function
+    related_incidents = models.JSONField(default=list, blank=True)  # past incidents with the same signature
+    ai_card = models.JSONField(default=dict, blank=True)  # responsible-AI card (decision maker, data shared, ...)
 
     created_at = models.DateTimeField(default=timezone.now)
     mitigated_at = models.DateTimeField(null=True, blank=True)
@@ -208,6 +215,7 @@ class RuntimeConfig(models.Model):
     llm_provider = models.CharField(max_length=32, default="groq")
     alert_threshold = models.FloatField(default=0.9)
     monitor_enabled = models.BooleanField(default=True)
+    approval_mode = models.CharField(max_length=16, default="autonomous")  # autonomous | review
     # GitHub App connection (filled by the "Connect GitHub" install flow)
     github_installation_id = models.BigIntegerField(null=True, blank=True)
     github_account = models.CharField(max_length=128, blank=True, default="")
