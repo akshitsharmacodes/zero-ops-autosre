@@ -6,15 +6,15 @@ import type { Incident, IncidentStatus } from "@/types/api"
 
 type StepState = "done" | "active" | "failed" | "pending" | "waiting"
 
-const STEPS: { id: string; label: string; hint: string; icon: React.ElementType; states: IncidentStatus[] }[] = [
-  { id: "alert", label: "Alert", hint: "Monitor / webhook", icon: Bell, states: ["ALERT_RECEIVED"] },
-  { id: "diag", label: "Diagnosing", hint: "pg_stat_activity + logs", icon: Search, states: ["DIAGNOSING"] },
-  { id: "mitigate", label: "Stop the bleeding", hint: "end stuck sessions", icon: Siren, states: ["MITIGATING"] },
-  { id: "corr", label: "Root cause", hint: "git history scoring", icon: Search, states: ["CORRELATING"] },
-  { id: "patch", label: "Patching", hint: "coding agent", icon: Wrench, states: ["PATCHING"] },
-  { id: "test", label: "Testing", hint: "sandbox", icon: ShieldCheck, states: ["TESTING_IN_SANDBOX"] },
-  { id: "pr", label: "PR created", hint: "watch & repair", icon: GitPullRequest, states: ["PR_CREATED", "UPDATING_PR"] },
-  { id: "merge", label: "Ready → merged", hint: "human merges", icon: GitMerge, states: ["READY_TO_MERGE", "RESOLVED"] },
+const STEPS: { id: string; label: string; icon: React.ElementType; states: IncidentStatus[] }[] = [
+  { id: "alert", label: "Alert", icon: Bell, states: ["ALERT_RECEIVED"] },
+  { id: "diag", label: "Diagnosing", icon: Search, states: ["DIAGNOSING"] },
+  { id: "mitigate", label: "Stop the bleeding", icon: Siren, states: ["MITIGATING"] },
+  { id: "corr", label: "Root cause", icon: Search, states: ["CORRELATING"] },
+  { id: "patch", label: "Patching", icon: Wrench, states: ["PATCHING"] },
+  { id: "test", label: "Testing", icon: ShieldCheck, states: ["TESTING_IN_SANDBOX"] },
+  { id: "pr", label: "PR created", icon: GitPullRequest, states: ["PR_CREATED", "UPDATING_PR"] },
+  { id: "merge", label: "Ready → merged", icon: GitMerge, states: ["READY_TO_MERGE", "RESOLVED"] },
 ]
 
 function lastActiveIndex(incident: Incident): number {
@@ -47,8 +47,8 @@ export const PipelineStepper: React.FC<{ incident?: Incident }> = ({ incident })
   }
   const rounds = incident.pull_request?.rounds || 0
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 px-4 py-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-3">
         <div>
           <h2 className="text-sm font-semibold tracking-wider uppercase text-zinc-300 font-mono">{incident.id}</h2>
           <p className="text-xs text-zinc-400 mt-0.5">
@@ -61,23 +61,29 @@ export const PipelineStepper: React.FC<{ incident?: Incident }> = ({ incident })
             <Badge variant="destructive" className="text-[11px] font-mono">Self-healing: retried with test feedback</Badge>
           )}
           {rounds > 0 && <Badge variant="info" className="text-[11px] font-mono">PR repair rounds: {rounds}</Badge>}
-          <Badge variant="outline" className="text-xs font-mono">Attempt {Math.max(incident.attempt, 0)}/{incident.max_attempts}</Badge>
+          <Badge variant="outline" className="text-xs font-mono whitespace-nowrap">Attempt {Math.max(incident.attempt, 0)}/{incident.max_attempts}</Badge>
         </div>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 min-[900px]:grid-cols-8 gap-1.5">
         {STEPS.map((step, idx) => {
           const st = stepState(idx, incident)
           const Icon = step.icon
           return (
-            <div key={step.id} className={`p-2.5 rounded-lg border ${TONE_CLASSES[st === "active" ? "active" : st === "done" ? "done" : st === "failed" ? "failed" : st === "waiting" ? "waiting" : "pending"]}`}>
-              <div className="flex items-center justify-between">
-                <Icon className="h-4 w-4" />
-                {st === "done" && <CheckCircle2 className="h-3.5 w-3.5" />}
-                {st === "active" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {st === "failed" && <AlertCircle className="h-3.5 w-3.5" />}
+            <div key={step.id} className={`relative flex min-h-[4.25rem] min-w-0 flex-col justify-between gap-1.5 rounded-lg border px-2 py-2 ${TONE_CLASSES[st === "active" ? "active" : st === "done" ? "done" : st === "failed" ? "failed" : st === "waiting" ? "waiting" : "pending"]}`}>
+              {st === "active" && (
+                <span
+                  className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-zinc-950"
+                  title="Running now"
+                  aria-label="Running now"
+                />
+              )}
+              <div className="flex items-center justify-between gap-1">
+                <Icon className="h-3.5 w-3.5 shrink-0" />
+                {st === "done" && <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />}
+                {st === "active" && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />}
+                {st === "failed" && <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
               </div>
-              <div className="mt-1.5 text-[11px] font-semibold leading-tight">{step.label}</div>
-              <div className="text-[10px] opacity-70 leading-tight">{step.hint}</div>
+              <div className="text-[11px] font-semibold leading-snug text-balance">{step.label}</div>
             </div>
           )
         })}
