@@ -168,9 +168,16 @@ def evaluate_change(policy: GuardrailPolicy, changes: dict[str, FileDiff], files
         "syntax", "Changed files parse", not syntax_errors,
         "; ".join(syntax_errors) if syntax_errors else "All changed source files parse.",
     ))
+    markers = [p for p, text in files_after.items() if CONFLICT_MARKER.search(text)]
+    if markers:
+        results.append(CheckResult("conflict_markers", "No leftover merge-conflict markers", False,
+                                   f"Conflict markers still present in: {', '.join(markers)}."))
     if not changes:
         results.append(CheckResult("non_empty", "Change is not empty", False, "No files were changed."))
     return results
+
+
+CONFLICT_MARKER = re.compile(r"^(<{7} |>{7} |={7}$)", re.M)
 
 
 def branch_check(policy: GuardrailPolicy, branch: str) -> CheckResult:

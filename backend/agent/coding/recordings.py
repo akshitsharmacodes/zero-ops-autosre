@@ -91,3 +91,59 @@ def recording_for_fix(suspect: dict) -> ScriptedClient | None:
     if loc.get("file") == VICTIM_FILE and loc.get("function") == "user_activity_report":
         return fix_recording()
     return None
+
+
+# --- outer loop: merge conflict with the demo teammate change (demo/teammate.py) ---------
+CONFLICT_BLOCK = '''<<<<<<< HEAD
+    with report_pool.connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, COUNT(*) AS events, MAX(created_at) AS last_seen "
+            "FROM analytics_useractivity GROUP BY user_id ORDER BY events DESC LIMIT 50"
+        )
+        rows = cursor.fetchall()
+=======
+    conn = report_pool.acquire()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id, COUNT(*) AS events, MAX(created_at) AS last_seen "
+        "FROM analytics_useractivity GROUP BY user_id ORDER BY events DESC LIMIT 100"
+    )
+    rows = cursor.fetchall()
+>>>>>>> origin/main
+'''
+
+RESOLVED_BLOCK = '''    with report_pool.connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT user_id, COUNT(*) AS events, MAX(created_at) AS last_seen "
+            "FROM analytics_useractivity GROUP BY user_id ORDER BY events DESC LIMIT 100"
+        )
+        rows = cursor.fetchall()
+'''
+
+
+def conflict_recording() -> ScriptedClient:
+    return ScriptedClient([
+        ("Look at the conflict markers.",
+         "read_file", {"path": VICTIM_FILE}),
+        ("Our side wraps the query in the pool's context manager; the teammate raised LIMIT 50 to 100 on the "
+         "old leaky code. Keep both: context manager AND LIMIT 100.",
+         "edit_file", {"path": VICTIM_FILE, "old_text": CONFLICT_BLOCK, "new_text": RESOLVED_BLOCK}),
+        ("Re-verify the merged result.",
+         "run_tests", {}),
+        ("Merged cleanly; tests pass.",
+         "finish", {
+             "summary": "Merged the latest main into the fix branch. Kept the teammate's change (top 100 users) "
+                        "and the leak fix (connection always returned via the context manager).",
+             "risk": "Low",
+             "risk_reason": "Conflict was limited to one query block; both intents preserved; suite passes.",
+         }),
+    ], name="victim-service-merge-conflict")
+
+
+def recording_for_conflict(conflicts: dict[str, str]) -> ScriptedClient | None:
+    """conflicts = {path: file text with markers}."""
+    if set(conflicts) == {VICTIM_FILE} and CONFLICT_BLOCK in conflicts[VICTIM_FILE]:
+        return conflict_recording()
+    return None

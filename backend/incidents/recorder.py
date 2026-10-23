@@ -94,3 +94,8 @@ class DjangoRecorder:
 
     def audit(self, kind: str, payload: dict) -> None:
         AuditLog.objects.create(incident_id=self.incident_id, kind=kind, payload=payload)
+
+    def timeline(self) -> list[dict]:
+        return list(
+            TimelineEvent.objects.filter(incident_id=self.incident_id).values("ts", "tag", "message", "state")
+        )

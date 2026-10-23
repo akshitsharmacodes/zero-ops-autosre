@@ -157,4 +157,27 @@ The same idea applies to databases. AutoSRE talks to them through **adapters**, 
 - **Lesson:** confidence isn't just "how high is the score", it's also "how clearly did it win". A close race means lower confidence.
 - **Lesson:** it's all text matching on diffs, so it works for any language. Python just gets a bonus step to find exact function boundaries.
 
+### Phase 4: Project profile, workspace and sandbox
+- **Profile:** AutoSRE reads `.autosre.yml` (or guesses from `package.json`, `requirements.txt`, `go.mod`, `pom.xml`) to learn *how to install and test* the project. That one idea is what makes it stack-independent.
+- **Workspace:** a throwaway clone on its own branch. The agent's file tools can't step outside it: `../`, absolute paths and `.git` are all refused.
+- **Sandbox, in two phases:**
+  1. *Reproduce:* run the new regression test on the **old** code. It **must fail**, which proves the test really catches the bug.
+  2. *Verify:* run the checks and all tests on the **new** code. They **must pass**.
+- **Why internet is off during tests but on during setup:** dependencies are installed once, while building a cached image (that needs internet). After that, tests run with **no network at all**, so nothing inside can call out or leak data.
+- **The fallback:** without Docker we can still run the tests on this machine, but the result is loudly labeled **NOT ISOLATED**. We never pretend it's safe.
+
+### Phase 5: Guardrails and the coding agent
+- **The agent's loop:** think, then use a tool, then look at the result, then repeat. The "brain" picks the next tool; plain code runs it.
+- **The tools are the fence.** The agent can't write files directly; it can only ask `edit_file`, and `edit_file` checks the rules first. A blocked edit comes back as a message such as *"Guardrail refused: 'settings.py' is outside the allowlist"*. The model reads that and tries a different approach, just like a developer whose PR was rejected by a linter.
+- **`finish` must be earned:** it's only accepted if the *last* test run passed on the *current* code, *and* the regression test failed on the old code.
+- **Cached mode, honestly:** we recorded the *decisions* (which tool, which edit), not the results. The edits, guardrails and sandbox all really run. The recording makes a realistic first mistake: it puts `release()` after `return`, where it never runs. The test catches it, the error goes back to the agent, and the second attempt uses the context manager. That's the self-healing loop, happening for real.
+
+### Phase 6: Delivery and the outer loop
+- **Two "GitHubs":** the real one (PyGithub) and a local one, a bare git repo plus PRs stored as small files. With the local one, the *whole* loop, conflicts included, works offline.
+- **How we detect a conflict without touching anything:** `git merge-tree` does a pretend merge in memory and lists the files that would conflict.
+- **How a conflict gets resolved:** clone the fix branch, merge the newest `main`, and git writes `<<<<<<<` / `=======` / `>>>>>>>` markers into the file. The agent gets a new task: *"keep both intentions"*. In our demo that means the teammate's `LIMIT 100` **and** our leak fix. Then the sandbox re-tests, and a guardrail refuses any leftover markers.
+- **The finish line:** no conflicts and green checks, so the PR is marked *ready for review*. AutoSRE then keeps watching. If `main` moves again and breaks it, the loop repairs it again. When a human merges, the incident becomes **RESOLVED**.
+- **When things go wrong:** if the database is unreachable, if no commit matches, if all attempts fail, or if GitHub is down, the incident is **ESCALATED**. The patch and an escalation report are saved under `var/deliveries/<incident>/`, so a human can take over immediately.
+- **Proof:** one automated test plays the whole story. It covers a 98% full database, diagnosis, stop-the-bleeding, Charlie's commit found, attempt 1 failing and attempt 2 passing, the PR opening, a teammate pushing a conflicting change, the agent merging both sides, ready-to-merge, and a human merging. The final `main` contains both the fix and the teammate's change.
+
 *Next sections are added as each phase is built.*

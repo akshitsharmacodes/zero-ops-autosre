@@ -113,7 +113,10 @@ class Workspace:
     # -- git views ----------------------------------------------------------------------
     def diff(self, against: str | None = None) -> str:
         """Unified diff of the working tree (including new files) against the base."""
-        git("add", "--intent-to-add", "--all", cwd=self.root)
+        untracked = git("ls-files", "--others", "--exclude-standard", "-z", cwd=self.root).split("\0")
+        untracked = [p for p in untracked if p and not set(Path(p).parts) & SKIP_DIRS]
+        if untracked:  # make brand-new files show up in the diff
+            git("add", "--intent-to-add", "--", *untracked, cwd=self.root)
         return git("diff", "--no-color", against or self.base_sha, "--", ".", cwd=self.root)
 
     def changed_files(self, against: str | None = None) -> dict:
@@ -148,6 +151,43 @@ class Workspace:
 
     def head_sha(self) -> str:
         return git("rev-parse", "HEAD", cwd=self.root).strip()
+
+    # -- outer loop helpers --------------------------------------------------------------
+    def fetch(self, git_env: dict | None = None) -> None:
+        git("fetch", "--quiet", "origin", cwd=self.root, env=git_env, timeout=120)
+
+    def merge_base_branch(self) -> list[str]:
+        """Merge the latest base branch into the fix branch. Returns conflicted files ([] if clean)."""
+        result = git("merge", "--no-edit", "--no-ff", f"origin/{self.base_branch}", cwd=self.root, check=False)
+        conflicted = self.conflicted_files()
+        if not conflicted and "CONFLICT" in result:
+            raise GitError(f"merge failed: {result.strip()}")
+        return conflicted
+
+    def conflicted_files(self) -> list[str]:
+        out = git("diff", "--name-only", "--diff-filter=U", cwd=self.root)
+        return [line for line in out.splitlines() if line.strip()]
+
+    def merging(self) -> bool:
+        return (self.root / ".git" / "MERGE_HEAD").exists()
+
+    def complete_merge(self) -> str:
+        git("add", "--all", cwd=self.root)
+        git("commit", "--quiet", "--no-edit", cwd=self.root)
+        return self.head_sha()
+
+    def abort_merge(self) -> None:
+        if self.merging():
+            git("merge", "--abort", cwd=self.root, check=False)
+
+    def reset_hard(self) -> None:
+        """Throw away uncommitted edits (used when restarting a task with another brain)."""
+        self.abort_merge()
+        git("reset", "--quiet", "--hard", "HEAD", cwd=self.root)
+        git("clean", "-fdq", cwd=self.root)
+
+    def log_between(self, older: str, newer: str) -> str:
+        return git("log", "--format=%h %an: %s", f"{older}..{newer}", cwd=self.root)
 
 
 def _force_remove(func, path, _exc):

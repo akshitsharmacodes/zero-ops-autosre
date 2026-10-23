@@ -35,6 +35,9 @@ class Recorder(Protocol):
     def audit(self, kind: str, payload: dict) -> None:
         """Append-only audit record (prompts, responses, patches, decisions)."""
 
+    def timeline(self) -> list[dict]:
+        """All timeline events so far (for the post-mortem)."""
+
 
 class MemoryRecorder:
     """Recorder that keeps everything in lists. Used by unit tests and scripts."""
@@ -51,7 +54,10 @@ class MemoryRecorder:
         self.statuses: list[str] = []
 
     def event(self, tag, message, **data):
-        self.events.append({"tag": tag, "message": message, "state": self.status, **data})
+        from datetime import datetime, timezone
+
+        self.events.append({"ts": datetime.now(timezone.utc).isoformat(), "tag": tag, "message": message,
+                            "state": self.status, **data})
 
     def set_status(self, status):
         self.status = status
@@ -71,3 +77,6 @@ class MemoryRecorder:
 
     def audit(self, kind, payload):
         self.audits.append({"kind": kind, "payload": payload})
+
+    def timeline(self):
+        return list(self.events)

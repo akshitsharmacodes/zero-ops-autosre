@@ -26,7 +26,7 @@ def launch(incident_id: str) -> threading.Thread:
 def _run(incident_id: str) -> None:
     close_old_connections()
     try:
-        from agent.pipeline import run_incident
+        from .wiring import run_incident
 
         run_incident(incident_id)
     except Exception:
